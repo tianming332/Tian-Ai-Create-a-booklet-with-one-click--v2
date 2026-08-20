@@ -1,8 +1,0 @@
-node_modules
-dist
-*.tsbuildinfo
-.DS_Store
-# Vite's local dep cache — machine specific, never upload it.
-.vite
-# Dev server pid/log written by scripts/dev.sh.
-.dev
