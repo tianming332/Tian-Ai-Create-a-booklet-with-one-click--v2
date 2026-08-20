@@ -1,0 +1,12 @@
+# Shell entry points must keep LF, or Windows checkouts break them
+# ("bash: $'\r': command not found") when the repo is cloned there.
+*.sh text eol=lf
+*.command text eol=lf
+*.mjs text eol=lf
+
+# Never let Git rewrite line endings inside binaries.
+*.otf binary
+*.ttf binary
+*.png binary
+*.jpg binary
+*.docx binary
