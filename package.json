@@ -1,0 +1,38 @@
+{
+  "name": "autobook",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "AutoBook V1 - local-first one-click photo book layout and print-ready PDF export",
+  "scripts": {
+    "dev": "vite",
+    "start": "bash scripts/dev.sh start",
+    "stop": "bash scripts/dev.sh stop",
+    "restart": "bash scripts/dev.sh restart",
+    "status": "bash scripts/dev.sh status",
+    "clean": "bash scripts/dev.sh clean",
+    "clean:all": "bash scripts/dev.sh clean-all",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "fonts": "node scripts/fetch-fonts.mjs"
+  },
+  "dependencies": {
+    "@pdf-lib/fontkit": "1.1.1",
+    "exifr": "7.1.3",
+    "pdf-lib": "1.17.1",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "zustand": "4.5.5"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.1",
+    "@types/react": "18.3.12",
+    "@types/react-dom": "18.3.1",
+    "@vitejs/plugin-react": "4.3.4",
+    "typescript": "5.6.3",
+    "vite": "5.4.11",
+    "vitest": "2.1.8"
+  }
+}
