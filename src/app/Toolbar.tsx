@@ -14,7 +14,16 @@ export function Toolbar(props: { onExport: () => void }): JSX.Element {
   return (
     <header className="toolbar">
       <span className="brand">
-        <img src={`${import.meta.env.BASE_URL}brand/mark.png`} alt="" />
+        <a
+          className="tjm-link"
+          href="https://tianming332.github.io/JiangmingTian_Portfolio_Final/"
+          target="_blank"
+          rel="noreferrer"
+          aria-label="返回 TJM 个人作品集"
+          title="返回 TJM 个人作品集"
+        >
+          <img src={`${import.meta.env.BASE_URL}brand/tjm-logo.png`} alt="TJM" />
+        </a>
         一键成册
         <em>autobook</em>
       </span>

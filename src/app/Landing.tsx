@@ -48,7 +48,16 @@ export function Landing(): JSX.Element {
           if (files.length) void addFiles(files);
         }}
       >
-        <img className="mark" src={`${import.meta.env.BASE_URL}brand/mark.png`} alt="" />
+        <a
+          className="tjm-link"
+          href="https://tianming332.github.io/JiangmingTian_Portfolio_Final/"
+          target="_blank"
+          rel="noreferrer"
+          aria-label="返回 TJM 个人作品集"
+          title="返回 TJM 个人作品集"
+        >
+          <img className="mark" src={`${import.meta.env.BASE_URL}brand/tjm-logo.png`} alt="TJM" />
+        </a>
         <h1>一键成册</h1>
         <span className="latin">autobook</span>
         <p>
