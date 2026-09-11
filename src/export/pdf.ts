@@ -1,7 +1,9 @@
 import fontkit from '@pdf-lib/fontkit';
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from 'pdf-lib';
 import type { MeasureText } from '../engine/text/textLayout';
+import { sideForIndex } from '../engine/layout/generate';
 import { fontRoleKey, fontUrl, type FontKey } from '../render/fonts';
+import { pageCanvasSize, renderPage, type PreviewImage } from '../render/preview';
 import { frameText, placeTextFrame } from '../render/textBox';
 import { mediaSize, placeImage, type Rect } from '../shared/geometry';
 import type { Asset, LayoutFrame, Page, PageSpec } from '../shared/types';
@@ -12,11 +14,13 @@ import { getBlob } from '../store/media';
 export interface ExportOptions {
   book: BookState;
   fileName?: string;
+  quality?: ExportQuality;
   onProgress?: (done: number, total: number, phase: ExportPhase) => void;
   signal?: AbortSignal;
 }
 
 export type ExportPhase = 'rendering' | 'saving';
+export type ExportQuality = 'fast' | 'standard' | 'print';
 
 export interface ExportResult {
   blob: Blob;
@@ -32,10 +36,19 @@ interface Fonts {
   fallback: boolean;
 }
 
-/** JPEG quality for rasterised page images; 0.92 keeps artefacts invisible in print. */
-const JPEG_QUALITY = 0.92;
-/** Hard cap on a single rasterised frame, guarding against canvas allocation failures. */
-const MAX_RASTER_PX = 8192;
+/**
+ * Keep exports inside a realistic browser memory budget. The previous 8192px
+ * per side allowed one canvas to occupy 256MB; a book with several frames then
+ * exhausted the tab before pdf-lib could save or start the download.
+ */
+const EXPORT_PROFILES: Record<
+  ExportQuality,
+  { dpi: number; jpegQuality: number; maxEdge: number; maxPixels: number }
+> = {
+  fast: { dpi: 160, jpegQuality: 0.74, maxEdge: 2560, maxPixels: 4_000_000 },
+  standard: { dpi: 240, jpegQuality: 0.82, maxEdge: 4096, maxPixels: 6_000_000 },
+  print: { dpi: 300, jpegQuality: 0.88, maxEdge: 4608, maxPixels: 9_000_000 },
+};
 
 class Aborted extends Error {
   constructor() {
@@ -52,14 +65,13 @@ function checkAbort(signal?: AbortSignal): void {
 export async function exportPdf(options: ExportOptions): Promise<ExportResult> {
   const { book } = options;
   const spec = book.pageSpec;
+  const profile = EXPORT_PROFILES[options.quality ?? 'standard'];
   const assets = new Map(book.assets.map((asset) => [asset.id, asset]));
   const doc = await PDFDocument.create();
-  doc.registerFontkit(fontkit);
   doc.setTitle(options.fileName ?? 'AutoBook');
   doc.setProducer('AutoBook 一键成册');
   doc.setCreator('AutoBook 一键成册');
 
-  const fonts = await embedFonts(doc);
   const media = mediaSize(spec);
   const sizePt = { w: mmToPt(media.w), h: mmToPt(media.h) };
   const total = book.pages.length;
@@ -67,8 +79,15 @@ export async function exportPdf(options: ExportOptions): Promise<ExportResult> {
   for (let i = 0; i < total; i += 1) {
     checkAbort(options.signal);
     const page = book.pages[i];
+    const pageJpeg = await rasterizeWholePage(page, spec, assets, profile, options.signal);
     const pdfPage = doc.addPage([sizePt.w, sizePt.h]);
-    await drawPage({ doc, pdfPage, page, spec, assets, fonts, signal: options.signal });
+    const image = await doc.embedJpg(pageJpeg);
+    pdfPage.drawImage(image, {
+      x: 0,
+      y: 0,
+      width: sizePt.w,
+      height: sizePt.h,
+    });
     options.onProgress?.(i + 1, total, 'rendering');
     // Let React paint the progress bar and give the browser a chance to
     // release temporary canvas/bitmap memory before processing the next page.
@@ -78,15 +97,81 @@ export async function exportPdf(options: ExportOptions): Promise<ExportResult> {
   checkAbort(options.signal);
   options.onProgress?.(total, total, 'saving');
   await yieldToBrowser();
-  // pdf-lib normally serialises many objects in one long task. A small
-  // objectsPerTick keeps the tab responsive while image-heavy books are saved.
-  const bytes = await doc.save({ objectsPerTick: 10 });
+  // Larger batches make final serialisation substantially faster while still
+  // yielding often enough to keep the browser alive.
+  const bytes = await doc.save({ objectsPerTick: 100 });
   const fileName = options.fileName ?? 'autobook.pdf';
   return {
     blob: new Blob([bytes], { type: 'application/pdf' }),
     fileName,
-    fontFallback: fonts.fallback,
+    fontFallback: false,
   };
+}
+
+/**
+ * Flattens one complete page to one JPEG before adding it to the PDF. This
+ * keeps the PDF object graph tiny (one image + one content stream per page),
+ * which avoids the very long final save seen with dozens of separate frames.
+ */
+async function rasterizeWholePage(
+  page: Page,
+  spec: PageSpec,
+  assets: Map<string, Asset>,
+  profile: { dpi: number; jpegQuality: number; maxEdge: number; maxPixels: number },
+  signal?: AbortSignal,
+): Promise<Uint8Array> {
+  const media = mediaSize(spec);
+  const requestedPxPerMm = profile.dpi / 25.4;
+  const requestedW = media.w * requestedPxPerMm;
+  const requestedH = media.h * requestedPxPerMm;
+  const edgeScale = Math.min(1, profile.maxEdge / requestedW, profile.maxEdge / requestedH);
+  const pixelScale = Math.min(1, Math.sqrt(profile.maxPixels / (requestedW * requestedH)));
+  const pxPerMm = requestedPxPerMm * Math.min(edgeScale, pixelScale);
+  const size = pageCanvasSize(spec, pxPerMm);
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, size.w);
+  canvas.height = Math.max(1, size.h);
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('浏览器无法创建页面画布');
+
+  const images = new Map<string, PreviewImage>();
+  const opened: ImageBitmap[] = [];
+  try {
+    const imageIds = new Set(
+      page.frames
+        .filter((frame) => frame.kind === 'image' && frame.assetId)
+        .map((frame) => frame.assetId as string),
+    );
+    for (const id of imageIds) {
+      checkAbort(signal);
+      const blob = getBlob(id);
+      if (!blob) continue;
+      try {
+        const bitmap = await createImageBitmap(blob);
+        opened.push(bitmap);
+        images.set(id, bitmap);
+      } catch {
+        // Preview renderer will draw a labelled placeholder for bad images.
+      }
+    }
+    renderPage({
+      ctx,
+      spec,
+      page,
+      side: sideForIndex(page.index),
+      assets,
+      images,
+      pxPerMm,
+    });
+    checkAbort(signal);
+    const jpeg = await canvasToJpegAtQuality(canvas, profile.jpegQuality);
+    if (!jpeg) throw new Error(`第 ${page.index + 1} 页无法生成图像`);
+    return new Uint8Array(await jpeg.arrayBuffer());
+  } finally {
+    for (const bitmap of opened) bitmap.close();
+    canvas.width = 1;
+    canvas.height = 1;
+  }
 }
 
 function yieldToBrowser(): Promise<void> {
@@ -107,7 +192,8 @@ function sanitizeForFallback(text: string): string {
  * succeeds with Helvetica and non-Latin characters dropped, which Preflight
  * already warned about.
  */
-async function embedFonts(doc: PDFDocument): Promise<Fonts> {
+export async function embedFonts(doc: PDFDocument): Promise<Fonts> {
+  doc.registerFontkit(fontkit);
   const keys: FontKey[] = ['sans', 'serif'];
   const embedded: Partial<Record<FontKey, PDFFont>> = {};
   for (const key of keys) {
@@ -157,6 +243,7 @@ interface DrawPageInput {
   spec: PageSpec;
   assets: Map<string, Asset>;
   fonts: Fonts;
+  profile: { dpi: number; jpegQuality: number; maxEdge: number; maxPixels: number };
   signal?: AbortSignal;
 }
 
@@ -193,7 +280,7 @@ function parseColor(value: string): ReturnType<typeof rgb> {
   return rgb(((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255);
 }
 
-async function drawPage(input: DrawPageInput): Promise<void> {
+export async function drawPage(input: DrawPageInput): Promise<void> {
   const { pdfPage, page, spec } = input;
   pdfPage.drawRectangle({
     x: 0,
@@ -249,7 +336,7 @@ async function drawImageFrame(input: DrawPageInput, frame: LayoutFrame): Promise
     const clipped = intersect(frame, mediaRect(spec));
     const visible = clipped ? intersect(clipped, placed) : undefined;
     if (!visible || visible.w < 0.05 || visible.h < 0.05) return;
-    const jpeg = await rasterize(bitmap, placed, visible, spec);
+    const jpeg = await rasterize(bitmap, placed, visible, spec, input.profile);
     if (!jpeg) return;
     const image = await input.doc.embedJpg(jpeg);
     pdfPage.drawImage(image, {
@@ -271,11 +358,14 @@ function canvasOf(w: number, h: number): OffscreenCanvas | HTMLCanvasElement {
   return canvas;
 }
 
-function canvasToJpeg(canvas: OffscreenCanvas | HTMLCanvasElement): Promise<Blob | null> {
+function canvasToJpegAtQuality(
+  canvas: OffscreenCanvas | HTMLCanvasElement,
+  quality: number,
+): Promise<Blob | null> {
   if ('convertToBlob' in canvas) {
-    return canvas.convertToBlob({ type: 'image/jpeg', quality: JPEG_QUALITY });
+    return canvas.convertToBlob({ type: 'image/jpeg', quality });
   }
-  return new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', JPEG_QUALITY));
+  return new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', quality));
 }
 
 async function rasterize(
@@ -283,6 +373,7 @@ async function rasterize(
   placed: Rect,
   visible: Rect,
   spec: PageSpec,
+  profile = EXPORT_PROFILES.standard,
 ): Promise<Uint8Array | undefined> {
   const scaleX = bitmap.width / placed.w;
   const scaleY = bitmap.height / placed.h;
@@ -290,9 +381,11 @@ async function rasterize(
   const sy = (visible.y - placed.y) * scaleY;
   const sw = Math.max(1, visible.w * scaleX);
   const sh = Math.max(1, visible.h * scaleY);
-  const wanted = (visible.w / 25.4) * spec.targetDpi;
+  const wanted = (visible.w / 25.4) * Math.min(spec.targetDpi, profile.dpi);
   // Never upscale beyond the source, and never blow past the canvas cap.
-  const scale = Math.min(1, wanted / sw, MAX_RASTER_PX / sw, MAX_RASTER_PX / sh);
+  const edgeScale = Math.min(profile.maxEdge / sw, profile.maxEdge / sh);
+  const pixelScale = Math.sqrt(profile.maxPixels / (sw * sh));
+  const scale = Math.min(1, wanted / sw, edgeScale, pixelScale);
   const outW = Math.max(1, Math.round(sw * scale));
   const outH = Math.max(1, Math.round(sh * scale));
   const canvas = canvasOf(outW, outH);
@@ -302,9 +395,16 @@ async function rasterize(
   ctx.fillRect(0, 0, outW, outH);
   ctx.imageSmoothingQuality = 'high';
   ctx.drawImage(bitmap, sx, sy, sw, sh, 0, 0, outW, outH);
-  const blob = await canvasToJpeg(canvas);
+  const blob = await canvasToJpegAtQuality(canvas, profile.jpegQuality);
   if (!blob) return undefined;
-  return new Uint8Array(await blob.arrayBuffer());
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  // Explicitly release the backing store. Safari otherwise keeps several old
+  // page canvases alive and the export dies near the final pages.
+  if ('width' in canvas) {
+    canvas.width = 1;
+    canvas.height = 1;
+  }
+  return bytes;
 }
 
 function drawTextFrame(input: DrawPageInput, frame: LayoutFrame): void {

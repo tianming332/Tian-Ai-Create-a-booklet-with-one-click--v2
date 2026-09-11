@@ -8,6 +8,7 @@ import { buildSpreads, spreadIndexOfPage } from './hooks';
 const MAX_LISTED = 40;
 
 type ExportPhase = 'rendering' | 'saving';
+type ExportQuality = 'fast' | 'standard' | 'print';
 
 interface ReadyPdf {
   blob: Blob;
@@ -33,6 +34,7 @@ export function ExportDialog(props: { onClose: () => void }): JSX.Element {
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState({ done: 0, total: pages.length });
   const [phase, setPhase] = useState<ExportPhase>('rendering');
+  const [quality, setQuality] = useState<ExportQuality>('fast');
   const [ready, setReady] = useState<ReadyPdf | null>(null);
   const controller = useRef<AbortController | null>(null);
 
@@ -59,6 +61,7 @@ export function ExportDialog(props: { onClose: () => void }): JSX.Element {
       const result = await exportPdf({
         book,
         fileName: safeFileName(name),
+        quality,
         signal: ctrl.signal,
         onProgress: (done, total, nextPhase) => {
           setProgress({ done, total });
@@ -99,6 +102,17 @@ export function ExportDialog(props: { onClose: () => void }): JSX.Element {
         <p className="hint">
           检查结果：{counts.error} 个错误 · {counts.warning} 个警告 · {counts.info} 个提示
         </p>
+
+        {!running && !ready ? (
+          <div className="row" style={{ marginBottom: 12 }}>
+            <label style={{ margin: 0 }}>导出质量</label>
+            <select value={quality} onChange={(event) => setQuality(event.target.value as ExportQuality)}>
+              <option value="fast">快速预览 · 160 DPI（推荐先测试）</option>
+              <option value="standard">标准成册 · 240 DPI</option>
+              <option value="print">印刷质量 · 300 DPI（最慢）</option>
+            </select>
+          </div>
+        ) : null}
 
         <div className="issues">
           {issues.slice(0, MAX_LISTED).map((issue) => (
