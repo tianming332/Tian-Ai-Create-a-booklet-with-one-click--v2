@@ -12,9 +12,11 @@ import { getBlob } from '../store/media';
 export interface ExportOptions {
   book: BookState;
   fileName?: string;
-  onProgress?: (done: number, total: number) => void;
+  onProgress?: (done: number, total: number, phase: ExportPhase) => void;
   signal?: AbortSignal;
 }
+
+export type ExportPhase = 'rendering' | 'saving';
 
 export interface ExportResult {
   blob: Blob;
@@ -67,16 +69,28 @@ export async function exportPdf(options: ExportOptions): Promise<ExportResult> {
     const page = book.pages[i];
     const pdfPage = doc.addPage([sizePt.w, sizePt.h]);
     await drawPage({ doc, pdfPage, page, spec, assets, fonts, signal: options.signal });
-    options.onProgress?.(i + 1, total);
+    options.onProgress?.(i + 1, total, 'rendering');
+    // Let React paint the progress bar and give the browser a chance to
+    // release temporary canvas/bitmap memory before processing the next page.
+    await yieldToBrowser();
   }
 
-  const bytes = await doc.save();
+  checkAbort(options.signal);
+  options.onProgress?.(total, total, 'saving');
+  await yieldToBrowser();
+  // Disabling object streams is a little larger on disk, but substantially
+  // reduces the long, opaque finalisation step for image-heavy books.
+  const bytes = await doc.save({ useObjectStreams: false });
   const fileName = options.fileName ?? 'autobook.pdf';
   return {
     blob: new Blob([bytes], { type: 'application/pdf' }),
     fileName,
     fontFallback: fonts.fallback,
   };
+}
+
+function yieldToBrowser(): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, 0));
 }
 
 /** Characters the WinAnsi standard fonts can render; used only in fallback mode. */
@@ -208,7 +222,9 @@ export function downloadBlob(blob: Blob, fileName: string): void {
   document.body.appendChild(link);
   link.click();
   link.remove();
-  window.setTimeout(() => URL.revokeObjectURL(url), 4000);
+  // Safari may start reading the blob well after the synthetic click. Revoking
+  // after only four seconds can therefore produce no file at all.
+  window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
 
 /**

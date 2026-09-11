@@ -7,6 +7,8 @@ import { buildSpreads, spreadIndexOfPage } from './hooks';
 
 const MAX_LISTED = 40;
 
+type ExportPhase = 'rendering' | 'saving';
+
 function safeFileName(name: string): string {
   const trimmed = name.trim().replace(/[\\/:*?"<>|]+/g, '_');
   return `${trimmed || 'autobook'}.pdf`;
@@ -24,6 +26,7 @@ export function ExportDialog(props: { onClose: () => void }): JSX.Element {
   const counts = countIssues(issues);
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState({ done: 0, total: pages.length });
+  const [phase, setPhase] = useState<ExportPhase>('rendering');
   const controller = useRef<AbortController | null>(null);
 
   const jumpTo = (issue: PreflightIssue) => {
@@ -41,6 +44,7 @@ export function ExportDialog(props: { onClose: () => void }): JSX.Element {
     controller.current = ctrl;
     setRunning(true);
     setProgress({ done: 0, total: pages.length });
+    setPhase('rendering');
     try {
       // pdf-lib + fontkit are ~1 MB, so they load only when the user exports.
       const { exportPdf, downloadBlob } = await import('../export/pdf');
@@ -48,7 +52,10 @@ export function ExportDialog(props: { onClose: () => void }): JSX.Element {
         book,
         fileName: safeFileName(name),
         signal: ctrl.signal,
-        onProgress: (done, total) => setProgress({ done, total }),
+        onProgress: (done, total, nextPhase) => {
+          setProgress({ done, total });
+          setPhase(nextPhase);
+        },
       });
       downloadBlob(result.blob, result.fileName);
       store.setToast(
@@ -110,7 +117,9 @@ export function ExportDialog(props: { onClose: () => void }): JSX.Element {
             </div>
             <div className="row">
               <span className="hint">
-                正在渲染 {progress.done} / {progress.total} 页
+                {phase === 'saving'
+                  ? '页面已完成，正在合成 PDF（大文件可能需要一些时间，请勿关闭页面）'
+                  : `正在渲染 ${progress.done} / ${progress.total} 页`}
               </span>
               <span className="spacer" />
               <button onClick={() => controller.current?.abort()}>取消</button>
