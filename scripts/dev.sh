@@ -30,7 +30,7 @@ start() {
   [ -d node_modules ] || { echo "安装依赖…"; npm install; }
   mkdir -p "$RUN_DIR"
   : >"$LOG_FILE"
-  npx vite --port "$PORT" >>"$LOG_FILE" 2>&1 &
+  nohup npx vite --port "$PORT" >>"$LOG_FILE" 2>&1 </dev/null &
   echo $! >"$PID_FILE"
   # Vite prints its banner within a second or two; wait so failures surface here.
   for _ in $(seq 1 40); do

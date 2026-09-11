@@ -9,6 +9,12 @@ const MAX_LISTED = 40;
 
 type ExportPhase = 'rendering' | 'saving';
 
+interface ReadyPdf {
+  blob: Blob;
+  fileName: string;
+  fontFallback: boolean;
+}
+
 function safeFileName(name: string): string {
   const trimmed = name.trim().replace(/[\\/:*?"<>|]+/g, '_');
   return `${trimmed || 'autobook'}.pdf`;
@@ -27,6 +33,7 @@ export function ExportDialog(props: { onClose: () => void }): JSX.Element {
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState({ done: 0, total: pages.length });
   const [phase, setPhase] = useState<ExportPhase>('rendering');
+  const [ready, setReady] = useState<ReadyPdf | null>(null);
   const controller = useRef<AbortController | null>(null);
 
   const jumpTo = (issue: PreflightIssue) => {
@@ -45,6 +52,7 @@ export function ExportDialog(props: { onClose: () => void }): JSX.Element {
     setRunning(true);
     setProgress({ done: 0, total: pages.length });
     setPhase('rendering');
+    setReady(null);
     try {
       // pdf-lib + fontkit are ~1 MB, so they load only when the user exports.
       const { exportPdf, downloadBlob } = await import('../export/pdf');
@@ -57,11 +65,13 @@ export function ExportDialog(props: { onClose: () => void }): JSX.Element {
           setPhase(nextPhase);
         },
       });
+      setReady(result);
       downloadBlob(result.blob, result.fileName);
       store.setToast(
-        result.fontFallback ? 'PDF 已导出（中文字体缺失，已用替代字体）' : 'PDF 已导出',
+        result.fontFallback
+          ? 'PDF 已生成（如未下载，请点“再次下载”；中文字体使用了替代字体）'
+          : 'PDF 已生成（如未自动下载，请点“再次下载”）',
       );
-      props.onClose();
     } catch (error) {
       const err = error as Error;
       store.setToast(err.name === 'AbortError' ? '已取消导出' : `导出失败：${err.message}`);
@@ -125,6 +135,21 @@ export function ExportDialog(props: { onClose: () => void }): JSX.Element {
               <button onClick={() => controller.current?.abort()}>取消</button>
             </div>
           </>
+        ) : ready ? (
+          <div className="row">
+            <span className="hint">PDF 已生成。浏览器若未自动下载，请点击右侧按钮。</span>
+            <span className="spacer" />
+            <button
+              className="primary"
+              onClick={() => {
+                void import('../export/pdf').then(({ downloadBlob }) =>
+                  downloadBlob(ready.blob, ready.fileName),
+                );
+              }}
+            >
+              再次下载 PDF
+            </button>
+          </div>
         ) : (
           <div className="row">
             <span className="hint">

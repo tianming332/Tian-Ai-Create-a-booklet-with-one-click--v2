@@ -78,9 +78,9 @@ export async function exportPdf(options: ExportOptions): Promise<ExportResult> {
   checkAbort(options.signal);
   options.onProgress?.(total, total, 'saving');
   await yieldToBrowser();
-  // Disabling object streams is a little larger on disk, but substantially
-  // reduces the long, opaque finalisation step for image-heavy books.
-  const bytes = await doc.save({ useObjectStreams: false });
+  // pdf-lib normally serialises many objects in one long task. A small
+  // objectsPerTick keeps the tab responsive while image-heavy books are saved.
+  const bytes = await doc.save({ objectsPerTick: 10 });
   const fileName = options.fileName ?? 'autobook.pdf';
   return {
     blob: new Blob([bytes], { type: 'application/pdf' }),
@@ -224,7 +224,7 @@ export function downloadBlob(blob: Blob, fileName: string): void {
   link.remove();
   // Safari may start reading the blob well after the synthetic click. Revoking
   // after only four seconds can therefore produce no file at all.
-  window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  window.setTimeout(() => URL.revokeObjectURL(url), 5 * 60_000);
 }
 
 /**
