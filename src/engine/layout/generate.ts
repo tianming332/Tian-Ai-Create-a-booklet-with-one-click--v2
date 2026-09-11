@@ -135,6 +135,64 @@ function makePage(
   return { id: makeId('pg'), index, templateId, density, frames: all, groupId, locked: false };
 }
 
+function isStandaloneTextPage(page: Page): boolean {
+  return (
+    page.templateId === 'T08' ||
+    (page.frames.some((frame) => frame.kind === 'text' && frame.textRole !== 'pageNumber') &&
+      !page.frames.some((frame) => frame.kind === 'image'))
+  );
+}
+
+/**
+ * Distributes standalone prose/quote pages through the visual story instead of
+ * leaving all unmatched text groups as one long block at the end. Spread pairs
+ * stay together. If there are at least as many visual units as text pages this
+ * guarantees that no two standalone text pages are adjacent.
+ */
+export function balanceTextPages(input: Page[], spec: PageSpec): Page[] {
+  const blanks = input.filter((page) => page.isBlank);
+  const content = input.filter((page) => !page.isBlank);
+  const textPages = content.filter(isStandaloneTextPage);
+  if (textPages.length < 2) return input;
+
+  const visualPages = content.filter((page) => !isStandaloneTextPage(page));
+  if (visualPages.length === 0) return input;
+
+  const units: Page[][] = [];
+  for (let i = 0; i < visualPages.length; i += 1) {
+    const page = visualPages[i];
+    const next = visualPages[i + 1];
+    if (next?.spreadPartnerOf === page.id) {
+      units.push([page, next]);
+      i += 1;
+    } else {
+      units.push([page]);
+    }
+  }
+
+  const balanced: Page[] = [];
+  let textAt = 0;
+  for (let unitAt = 0; unitAt < units.length; unitAt += 1) {
+    balanced.push(...units[unitAt]);
+    const remainingTexts = textPages.length - textAt;
+    const remainingUnits = units.length - unitAt;
+    const take = Math.ceil(remainingTexts / remainingUnits);
+    for (let n = 0; n < take && textAt < textPages.length; n += 1) {
+      balanced.push(textPages[textAt]);
+      textAt += 1;
+    }
+  }
+  balanced.push(...textPages.slice(textAt), ...blanks);
+
+  return balanced.map((page, index) => {
+    const frames = page.frames.filter((frame) => frame.textRole !== 'pageNumber');
+    if (spec.showPageNumbers && index > 0 && !page.isBlank) {
+      frames.push(pageNumberFrame(spec, sideForIndex(index), index));
+    }
+    return { ...page, index, frames };
+  });
+}
+
 /** Deterministic content-driven pagination (spec 12.1). */
 export function generatePages(options: GenerateOptions): Page[] {
   const { spec, assets, groups } = options;
@@ -150,14 +208,19 @@ export function generatePages(options: GenerateOptions): Page[] {
     groups.length >= 3;
 
   const analysed = assets.filter((a) => a.kind === 'image' && a.visual);
-  if (options.cover !== false && (style ? style.layout.cover : true) && analysed.length > 0) {
-    const hero = [...analysed].sort((a, b) => coverScore(b) - coverScore(a) || a.importIndex - b.importIndex)[0];
+  const coverHeroId =
+    options.cover !== false && (style ? style.layout.cover : true) && analysed.length > 0
+      ? [...analysed].sort((a, b) => coverScore(b) - coverScore(a) || a.importIndex - b.importIndex)[0].id
+      : undefined;
+  if (coverHeroId) {
+    const hero = byId.get(coverHeroId)!;
+    const caption = assets.find((asset) => asset.kind === 'text' && asset.boundToAssetId === coverHeroId);
     const def = templateById('T01')!;
     const ctx: TemplateContext = {
       spec,
       side: 'single',
       images: [hero],
-      texts: [],
+      texts: caption ? [caption] : [],
       gap: frameGap(spec),
       pageIndex: 0,
     };
@@ -167,6 +230,11 @@ export function generatePages(options: GenerateOptions): Page[] {
 
   groups.forEach((group) => {
     const bucket = bucketFor(group, byId);
+    if (coverHeroId) {
+      const at = bucket.images.findIndex((asset) => asset.id === coverHeroId);
+      if (at >= 0) bucket.images.splice(at, 1);
+      bucket.captions.delete(coverHeroId);
+    }
     if (bucket.images.length === 0 && bucket.freeTexts.length === 0) return;
 
     const chapterTitle = useChapters ? chapterTitleFor(group, byId) : undefined;
@@ -212,8 +280,16 @@ export function generatePages(options: GenerateOptions): Page[] {
           });
           if (candidate) found.push({ candidate, ctx });
         }
-        const best = bestCandidate(found.map((f) => f.candidate));
-        return best ? found.find((f) => f.candidate === best) : undefined;
+        // When both prose and photos remain, consume one of each in a mixed
+        // page before considering image-only grids. Otherwise grids exhaust all
+        // photos first and leave 5–8 quote pages together at the end.
+        const mixed =
+          bucket.images.length > 0 && bucket.freeTexts.length > 0
+            ? found.filter((item) => item.ctx.images.length > 0 && item.ctx.texts.length > 0)
+            : [];
+        const eligible = mixed.length > 0 ? mixed : found;
+        const best = bestCandidate(eligible.map((f) => f.candidate));
+        return best ? eligible.find((f) => f.candidate === best) : undefined;
       };
 
       // Rhythm rules are advisory when nothing else fits — a page must be emitted.
@@ -248,11 +324,13 @@ export function generatePages(options: GenerateOptions): Page[] {
     }
   });
 
+  const balanced = balanceTextPages(pages, spec);
+
   // Books are printed in spreads: keep the page count even.
-  if (pages.length % 2 === 1) {
-    pages.push({
+  if (balanced.length % 2 === 1) {
+    balanced.push({
       id: makeId('pg'),
-      index: pages.length,
+      index: balanced.length,
       templateId: 'blank',
       density: 1,
       frames: [],
@@ -260,5 +338,5 @@ export function generatePages(options: GenerateOptions): Page[] {
       isBlank: true,
     });
   }
-  return pages;
+  return balanced;
 }

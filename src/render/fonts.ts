@@ -5,17 +5,17 @@ export type FontKey = 'sans' | 'serif';
 /** Families registered by `loadPreviewFonts`; kept in sync with the PDF embedder. */
 export const PREVIEW_FAMILY: Record<FontKey, string> = {
   sans: 'AutoBook Sans',
-  serif: 'AutoBook Serif',
+  serif: 'AutoBook Sans',
 };
 
 export const FONT_FILES: Record<FontKey, string> = {
   sans: 'NotoSansSC-Regular.otf',
-  serif: 'NotoSerifSC-Regular.otf',
+  serif: 'NotoSansSC-Regular.otf',
 };
 
 const FALLBACK: Record<FontKey, string> = {
   sans: '"PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif',
-  serif: '"Songti SC", "Source Han Serif SC", "Noto Serif CJK SC", serif',
+  serif: '"PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif',
 };
 
 /** Absolute URL of a bundled font, honouring the Vite base path. */
@@ -25,7 +25,8 @@ export function fontUrl(key: FontKey): string {
 }
 
 export function fontRoleKey(role: TextRole | undefined): FontKey {
-  return role === 'chapterTitle' || role === 'sentence' ? 'serif' : 'sans';
+  void role;
+  return 'sans';
 }
 
 /** CSS font shorthand for a canvas context at a given px size. */

@@ -151,7 +151,7 @@ function drawTextFrame(input: RenderPageInput, frame: LayoutFrame, px: (mm: Mm) 
   ctx.beginPath();
   ctx.rect(px(frame.x) - 1, px(frame.y) - 1, px(frame.w) + 2, px(frame.h) + 2);
   ctx.clip();
-  ctx.fillStyle = frame.color ?? '#111827';
+  ctx.fillStyle = frame.textOnImage ? contrastColorBelow(ctx, frame, px) : (frame.color ?? '#111827');
   ctx.font = cssFont(key, ptToPreviewPx(placed.sizePt, input.pxPerMm));
   ctx.textBaseline = 'alphabetic';
   ctx.textAlign = 'left';
@@ -159,4 +159,43 @@ function drawTextFrame(input: RenderPageInput, frame: LayoutFrame, px: (mm: Mm) 
     ctx.fillText(line.text, px(line.xMm), px(line.baselineMm));
   }
   ctx.restore();
+}
+
+/** Samples the actual photograph below the text rather than the whole image. */
+function contrastColorBelow(
+  ctx: CanvasRenderingContext2D,
+  frame: LayoutFrame,
+  px: (mm: Mm) => number,
+): '#ffffff' | '#111111' {
+  const canvas = ctx.canvas;
+  const transform = ctx.getTransform();
+  // Include the current bleed translation and device-pixel scaling. ImageData
+  // coordinates are always backing-store pixels and ignore canvas transforms.
+  const x = Math.max(0, Math.floor(transform.e + px(frame.x) * transform.a));
+  const y = Math.max(0, Math.floor(transform.f + px(frame.y) * transform.d));
+  const w = Math.max(1, Math.min(canvas.width - x, Math.ceil(px(frame.w) * transform.a)));
+  const h = Math.max(1, Math.min(canvas.height - y, Math.ceil(px(frame.h) * transform.d)));
+  if (w <= 0 || h <= 0) return frame.color === '#ffffff' ? '#ffffff' : '#111111';
+  try {
+    // Sampling every pixel is unnecessary and expensive at print resolution.
+    const data = ctx.getImageData(x, y, w, h).data;
+    const pixels = w * h;
+    const step = Math.max(1, Math.floor(Math.sqrt(pixels / 1600)));
+    let sum = 0;
+    let count = 0;
+    for (let py = 0; py < h; py += step) {
+      for (let pxAt = 0; pxAt < w; pxAt += step) {
+        const at = (py * w + pxAt) * 4;
+        const r = data[at] / 255;
+        const g = data[at + 1] / 255;
+        const b = data[at + 2] / 255;
+        // Perceived sRGB luminance; green contributes most to readability.
+        sum += r * 0.2126 + g * 0.7152 + b * 0.0722;
+        count += 1;
+      }
+    }
+    return count > 0 && sum / count < 0.56 ? '#ffffff' : '#111111';
+  } catch {
+    return frame.color === '#ffffff' ? '#ffffff' : '#111111';
+  }
 }

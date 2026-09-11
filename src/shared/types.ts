@@ -32,6 +32,8 @@ export interface VisualFeatures {
   /** 64-bit dHash as a 16-char hex string. */
   dHash: string;
   hasAlpha: boolean;
+  /** Subject-weighted crop focus in 0..1 image coordinates. */
+  focus?: Focus;
 }
 
 export interface TextFeatures {
@@ -79,6 +81,9 @@ export interface Asset {
   analysisStatus: AnalysisStatus;
   warnings: string[];
   nearDuplicateOf?: string;
+  /** Transient AI tags; not required for saved projects. */
+  aiTags?: string[];
+  aiCaption?: string;
 }
 
 export interface AssetError {
@@ -131,6 +136,8 @@ export interface LayoutFrame {
   textOverride?: string;
   align?: 'left' | 'center' | 'right';
   color?: string;
+  /** Text overlays photography; renderer samples the pixels below it for contrast. */
+  textOnImage?: boolean;
   /** Full-bleed frames are authored in bleed coordinates (may be negative). */
   bleedOut?: boolean;
 }

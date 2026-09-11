@@ -206,6 +206,7 @@ export function orderGroupsByColorFlow(groups: Group[], assets: Asset[]): Group[
 function attachTextAssets(groups: Group[], assets: Asset[], settings: GroupingSettings): void {
   const byId = new Map(assets.map((a) => [a.id, a]));
   const groupOf = new Map<string, Group>();
+  const textCount = new Map<string, number>();
   for (const group of groups) for (const id of group.assetIds) groupOf.set(id, group);
 
   for (const asset of assets) {
@@ -232,15 +233,33 @@ function attachTextAssets(groups: Group[], assets: Asset[], settings: GroupingSe
     if (best) {
       best.assetIds.push(asset.id);
       groupOf.set(asset.id, best);
+      textCount.set(best.id, (textCount.get(best.id) ?? 0) + 1);
     } else {
-      const solo: Group = {
-        id: makeId('grp'),
-        assetIds: [asset.id],
-        locked: false,
-        boundaryReason: '独立文字组',
-      };
-      groups.push(solo);
-      groupOf.set(asset.id, solo);
+      // If photos exist, spread unmatched prose evenly across photo groups.
+      // Keeping every unmatched paragraph in its own group caused all quote
+      // pages to collect at the end of the book.
+      const visualGroups = groups.filter((group) =>
+        group.assetIds.some((id) => byId.get(id)?.kind === 'image'),
+      );
+      const fallback = visualGroups.sort(
+        (a, b) =>
+          (textCount.get(a.id) ?? 0) - (textCount.get(b.id) ?? 0) ||
+          groups.indexOf(a) - groups.indexOf(b),
+      )[0];
+      if (fallback) {
+        fallback.assetIds.push(asset.id);
+        groupOf.set(asset.id, fallback);
+        textCount.set(fallback.id, (textCount.get(fallback.id) ?? 0) + 1);
+      } else {
+        const solo: Group = {
+          id: makeId('grp'),
+          assetIds: [asset.id],
+          locked: false,
+          boundaryReason: '独立文字组',
+        };
+        groups.push(solo);
+        groupOf.set(asset.id, solo);
+      }
     }
   }
 }

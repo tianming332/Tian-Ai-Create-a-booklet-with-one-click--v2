@@ -34,8 +34,8 @@ function imageFrame(rect: Rect, asset: Asset | undefined, extra: Partial<LayoutF
     w: rect.w,
     h: rect.h,
     assetId: asset?.id,
-    fit: 'fill',
-    focus: { x: 0.5, y: 0.5 },
+    fit: extra.fit ?? (asset?.visual?.aspectClass === 'portrait' && rect.w / rect.h > 1.15 ? 'fit' : 'fill'),
+    focus: asset?.visual?.focus ?? { x: 0.5, y: 0.4 },
     ...extra,
   };
 }
@@ -90,6 +90,34 @@ function captionLines(asset: Asset | undefined): number {
   return 3;
 }
 
+function overlayColors(image: Asset | undefined): { color: string; textOnImage: true } {
+  const darkImage = (image?.visual?.luma ?? 0.5) < 0.56;
+  return { color: darkImage ? '#ffffff' : '#111111', textOnImage: true };
+}
+
+/** Caption plate placed over the bottom of a photograph-filled composition. */
+function overlayCaption(
+  ctx: TemplateContext,
+  area: Rect,
+  image: Asset | undefined,
+): LayoutFrame | undefined {
+  const asset = ctx.texts[0];
+  if (!asset) return undefined;
+  const h = textBlockHeight(ctx.spec, 'caption', captionLines(asset));
+  const inset = Math.max(2.5, ctx.gap * 0.65);
+  return textFrame(
+    {
+      x: area.x + inset,
+      y: area.y + area.h - h - inset,
+      w: Math.max(1, area.w - inset * 2),
+      h,
+    },
+    'caption',
+    asset,
+    { ...overlayColors(image) },
+  );
+}
+
 /** Splits the live area into an image area plus a caption strip when text exists. */
 function withCaption(
   ctx: TemplateContext,
@@ -127,12 +155,8 @@ const T01: TemplateDefinition = {
     const caption = ctx.texts[0];
     if (caption) {
       const live = safeRect(ctx.spec, ctx.side);
-      const h = textBlockHeight(ctx.spec, 'caption', captionLines(caption));
-      frames.push(
-        textFrame({ x: live.x, y: live.y + live.h - h, w: live.w, h }, 'caption', caption, {
-          color: '#ffffff',
-        }),
-      );
+      const overlay = overlayCaption(ctx, live, ctx.images[0]);
+      if (overlay) frames.push(overlay);
     }
     return frames;
   },
@@ -200,11 +224,11 @@ const T04: TemplateDefinition = {
   },
   build: (ctx) => {
     const live = safeRect(ctx.spec, ctx.side);
-    const { image, caption, captionAsset } = withCaption(ctx, live);
     const portrait = ctx.images.every((a) => aspectOf(a) < 1);
-    const cells = portrait ? splitColumns(image, 2, ctx.gap) : splitRows(image, 2, ctx.gap);
+    const cells = portrait ? splitColumns(live, 2, ctx.gap) : splitRows(live, 2, ctx.gap);
     const frames = ctx.images.map((asset, i) => imageFrame(cells[i], asset));
-    if (caption) frames.push(textFrame(caption, 'caption', captionAsset));
+    const overlay = overlayCaption(ctx, live, ctx.images[ctx.images.length - 1]);
+    if (overlay) frames.push(overlay);
     return frames;
   },
 };
@@ -222,15 +246,15 @@ const T05: TemplateDefinition = {
   aspectFit: (ctx) => (aspectOf(ctx.images[0]) >= 1 ? 0.92 : 0.7),
   build: (ctx) => {
     const live = safeRect(ctx.spec, ctx.side);
-    const { image, caption, captionAsset } = withCaption(ctx, live);
-    const [top, bottom] = splitRowsWeighted(image, 0.58, ctx.gap);
+    const [top, bottom] = splitRowsWeighted(live, 0.58, ctx.gap);
     const cells = splitColumns(bottom, 2, ctx.gap);
     const frames = [
       imageFrame(top, ctx.images[0]),
       imageFrame(cells[0], ctx.images[1]),
       imageFrame(cells[1], ctx.images[2]),
     ];
-    if (caption) frames.push(textFrame(caption, 'caption', captionAsset));
+    const overlay = overlayCaption(ctx, live, ctx.images[2]);
+    if (overlay) frames.push(overlay);
     return frames;
   },
 };
@@ -252,11 +276,11 @@ const T06: TemplateDefinition = {
   },
   build: (ctx) => {
     const live = safeRect(ctx.spec, ctx.side);
-    const { image, caption, captionAsset } = withCaption(ctx, live);
     const portraitPage = ctx.spec.trimHeight >= ctx.spec.trimWidth;
-    const cells = portraitPage ? splitRows(image, 3, ctx.gap) : splitColumns(image, 3, ctx.gap);
+    const cells = portraitPage ? splitRows(live, 3, ctx.gap) : splitColumns(live, 3, ctx.gap);
     const frames = ctx.images.map((asset, i) => imageFrame(cells[i], asset));
-    if (caption) frames.push(textFrame(caption, 'caption', captionAsset));
+    const overlay = overlayCaption(ctx, live, ctx.images[ctx.images.length - 1]);
+    if (overlay) frames.push(overlay);
     return frames;
   },
 };
@@ -274,11 +298,11 @@ const T07: TemplateDefinition = {
   aspectFit: () => 0.78,
   build: (ctx) => {
     const live = safeRect(ctx.spec, ctx.side);
-    const { image, caption, captionAsset } = withCaption(ctx, live);
-    const rows = splitRows(image, 2, ctx.gap);
+    const rows = splitRows(live, 2, ctx.gap);
     const cells = [...splitColumns(rows[0], 2, ctx.gap), ...splitColumns(rows[1], 2, ctx.gap)];
     const frames = ctx.images.map((asset, i) => imageFrame(cells[i], asset));
-    if (caption) frames.push(textFrame(caption, 'caption', captionAsset));
+    const overlay = overlayCaption(ctx, live, ctx.images[ctx.images.length - 1]);
+    if (overlay) frames.push(overlay);
     return frames;
   },
 };
