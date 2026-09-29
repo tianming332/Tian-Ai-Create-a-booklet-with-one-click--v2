@@ -5,6 +5,111 @@ export type AssetKind = 'image' | 'text';
 export type AspectClass = 'portrait' | 'square' | 'landscape' | 'panorama';
 export type TextLengthClass = 'label' | 'short' | 'medium' | 'long' | 'tooLong';
 
+/** Semantic role of a piece of authored text. This is deliberately separate
+ * from TextRole, which is the much smaller set of renderer typography roles. */
+export type TextBlockRole =
+  | 'heading1'
+  | 'heading2'
+  | 'heading3'
+  | 'lead'
+  | 'body'
+  | 'shortSentence'
+  | 'quote'
+  | 'caption'
+  | 'metadata'
+  | 'credit';
+
+export type TextEntityType =
+  | 'location'
+  | 'person'
+  | 'date'
+  | 'time'
+  | 'event'
+  | 'object'
+  | 'action'
+  | 'emotion'
+  | 'mood'
+  | 'theme';
+
+export interface TextEntity {
+  type: TextEntityType;
+  value: string;
+  normalizedValue?: string;
+  confidence: number;
+}
+
+export interface TextBlock {
+  id: string;
+  sourceDocumentId: string;
+  role: TextBlockRole;
+  text: string;
+  order: number;
+  importance: number;
+  /** Headings/leads/quotes may become compositional display type. */
+  decorative: boolean;
+  allowOverlay: boolean;
+  /** Body fragments may continue on another physical page. */
+  allowSplit: boolean;
+  continuation?: boolean;
+  entities: TextEntity[];
+  semanticTags: string[];
+  parser: 'rule' | 'ai' | 'manual';
+}
+
+export interface TextDocument {
+  id: string;
+  blocks: TextBlock[];
+  parser: 'rule' | 'ai' | 'manual';
+  version: 1;
+}
+
+/** Shared vocabulary used by text and image analysis. Arrays stay open-ended
+ * so a future model can add useful terms without a schema migration. */
+export interface SemanticTags {
+  people?: string[];
+  actions?: string[];
+  scenes?: string[];
+  objects?: string[];
+  locations?: string[];
+  events?: string[];
+  emotions?: string[];
+  moods?: string[];
+  themes?: string[];
+}
+
+/** Normalized image-space region returned by vision analysis. */
+export interface FaceRegion {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+export type TextImageRelationKind =
+  | 'caption'
+  | 'literal'
+  | 'person'
+  | 'action'
+  | 'location'
+  | 'time'
+  | 'emotion'
+  | 'mood'
+  | 'theme'
+  | 'manual'
+  | 'weak';
+
+export interface TextImageRelation {
+  id: string;
+  textAssetId: string;
+  textBlockId: string;
+  imageId: string;
+  kind: TextImageRelationKind;
+  score: number;
+  reasons: string[];
+  source: 'rule' | 'ai' | 'manual';
+  locked: boolean;
+}
+
 export interface LabColor {
   l: number;
   a: number;
@@ -72,10 +177,17 @@ export interface Asset {
   /** IndexedDB key of the 256px preview (images only). */
   thumbKey?: string;
   text?: string;
+  /** One semantic block per asset keeps the existing layout engine compatible;
+   * sourceDocumentId reconnects blocks imported from the same document. */
+  textBlock?: TextBlock;
+  sourceDocumentId?: string;
   visual?: VisualFeatures;
   textFeatures?: TextFeatures;
   /** Hard user binding: this text asset is a caption of that image asset. */
   boundToAssetId?: string;
+  /** Best non-destructive semantic suggestion; unlike a caption binding this
+   * may be recomputed as tags improve. */
+  relatedToAssetId?: string;
   groupId?: string;
   locked?: boolean;
   analysisStatus: AnalysisStatus;
@@ -84,6 +196,9 @@ export interface Asset {
   /** Transient AI tags; not required for saved projects. */
   aiTags?: string[];
   aiCaption?: string;
+  aiSemantic?: SemanticTags;
+  /** AI-detected faces in normalized image coordinates. */
+  faces?: FaceRegion[];
 }
 
 export interface AssetError {
@@ -134,6 +249,9 @@ export interface LayoutFrame {
   textRole?: TextRole;
   /** Overridden text content (chapter titles are generated, not imported). */
   textOverride?: string;
+  /** Character range used when one body asset flows through several frames. */
+  textRange?: { start: number; end: number };
+  writingMode?: 'horizontal-tb' | 'vertical-rl';
   align?: 'left' | 'center' | 'right';
   color?: string;
   /** Text overlays photography; renderer samples the pixels below it for contrast. */
@@ -148,6 +266,8 @@ export interface Page {
   /** Index within the book, 0-based; page 0 is the cover. */
   index: number;
   templateId: string;
+  /** Family-level geometry controls; currently used by the Split family. */
+  layoutParams?: import('../engine/layout/types').SplitLayoutParameters;
   density: Density;
   frames: LayoutFrame[];
   groupId?: string;
@@ -189,6 +309,7 @@ export interface Project {
   assets: Asset[];
   groups: Group[];
   pages: Page[];
+  textImageRelations?: TextImageRelation[];
   errors: AssetError[];
 }
 

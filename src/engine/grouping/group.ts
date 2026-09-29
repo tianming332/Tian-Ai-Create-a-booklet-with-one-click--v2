@@ -220,6 +220,17 @@ function attachTextAssets(groups: Group[], assets: Asset[], settings: GroupingSe
       }
       continue;
     }
+    // A semantic suggestion is softer than a caption binding: it joins the
+    // scene group but remains prose/lead/quote and is not overlaid by grids.
+    if (asset.relatedToAssetId) {
+      const target = groupOf.get(asset.relatedToAssetId);
+      if (target) {
+        target.assetIds.push(asset.id);
+        groupOf.set(asset.id, target);
+        textCount.set(target.id, (textCount.get(target.id) ?? 0) + 1);
+        continue;
+      }
+    }
     let best: Group | undefined;
     let bestScore = 0.28; // below this a text becomes its own quote page
     for (const group of groups) {

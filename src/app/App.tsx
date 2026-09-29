@@ -20,8 +20,8 @@ export function App(): JSX.Element {
   const fontsVersion = usePreviewFonts();
   const [exportOpen, setExportOpen] = useState(false);
   // Panel collapse is pure chrome state: kept local so it stays out of undo.
-  const [leftOpen, setLeftOpen] = useState(true);
-  const [rightOpen, setRightOpen] = useState(true);
+  const [leftOpen, setLeftOpen] = useState(() => window.matchMedia('(min-width: 901px)').matches);
+  const [rightOpen, setRightOpen] = useState(() => window.matchMedia('(min-width: 901px)').matches);
 
   useShortcuts();
 

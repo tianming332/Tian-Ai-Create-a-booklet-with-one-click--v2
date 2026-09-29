@@ -21,6 +21,10 @@ export interface StylePage {
   showPageNumbers: boolean;
 }
 
+export type ReadingOrder = 'ltr' | 'rtl';
+export type WritingMode = 'horizontal-tb' | 'vertical-rl';
+export type AiStyleTag = 'album' | 'magazine' | 'classic-cn' | 'vertical-jp';
+
 export interface StyleLayout {
   /** Emit a full-bleed cover as page 0. */
   cover: boolean;
@@ -30,6 +34,12 @@ export interface StyleLayout {
   allow: string[];
   /** Score multipliers per template id; missing entries count as 1. */
   weights: Record<string, number>;
+  /** AI-only presentation tag; rule layout ignores this. */
+  aiTag?: AiStyleTag;
+  readingOrder?: ReadingOrder;
+  writingMode?: WritingMode;
+  /** CJK text must not cover detected faces. */
+  avoidFaces?: boolean;
 }
 
 export interface BookStyle {
@@ -69,7 +79,7 @@ const CLASSIC: BookStyle = {
   builtin: true,
   page: page({}),
   grouping: {},
-  layout: { cover: true, chapters: true, allow: [], weights: {} },
+  layout: { cover: true, chapters: true, allow: [], weights: {}, aiTag: 'album' },
 };
 
 const GALLERY: BookStyle = {
@@ -85,6 +95,7 @@ const GALLERY: BookStyle = {
     chapters: true,
     allow: ['T01', 'T02', 'T03', 'T04', 'T08', 'T09'],
     weights: { T02: 1.4, T08: 1.2, T03: 1.1, T01: 0.8 },
+    aiTag: 'album',
   },
 };
 
@@ -101,6 +112,7 @@ const MAGAZINE: BookStyle = {
     chapters: true,
     allow: [],
     weights: { T05: 1.3, T06: 1.25, T07: 1.3, T03: 1.1, T02: 0.7 },
+    aiTag: 'magazine',
   },
 };
 
@@ -124,6 +136,7 @@ const CINEMA: BookStyle = {
     chapters: false,
     allow: ['T01', 'T02', 'T04', 'T08', 'T09', 'T10'],
     weights: { T01: 1.5, T10: 1.6, T04: 1.05 },
+    aiTag: 'album',
   },
 };
 
@@ -140,6 +153,7 @@ const ZINE: BookStyle = {
     chapters: false,
     allow: ['T01', 'T02', 'T04', 'T06', 'T07', 'T08'],
     weights: { T07: 1.3, T04: 1.15, T01: 1.1 },
+    aiTag: 'magazine',
   },
 };
 
@@ -162,10 +176,51 @@ const POCKET: BookStyle = {
     chapters: true,
     allow: ['T01', 'T02', 'T03', 'T04', 'T06', 'T08', 'T09'],
     weights: { T03: 1.45, T08: 1.15, T02: 1.1 },
+    aiTag: 'album',
   },
 };
 
-export const BUILTIN_STYLES: BookStyle[] = [CLASSIC, GALLERY, MAGAZINE, CINEMA, ZINE, POCKET];
+const CLASSIC_CN: BookStyle = {
+  id: 'classic-cn',
+  name: '中式古典',
+  latin: 'classical chinese',
+  blurb: '留白、单图与题跋感图文页，适合雅集、园林与静物。',
+  builtin: true,
+  page: page({ safeMargin: 22, gutter: 16 }),
+  grouping: { maxImagesPerGroup: 6, groupStrength: 1.05 },
+  layout: {
+    cover: true,
+    chapters: true,
+    allow: ['T01', 'T02', 'T03', 'T08', 'T09'],
+    weights: { T02: 1.5, T03: 1.35, T08: 1.3, T01: 0.85 },
+    aiTag: 'classic-cn',
+    writingMode: 'vertical-rl',
+    readingOrder: 'rtl',
+    avoidFaces: true,
+  },
+};
+
+const VERTICAL_JP: BookStyle = {
+  id: 'vertical-jp',
+  name: '日式竖排',
+  latin: 'tategaki',
+  blurb: '右起左翻的阅读顺序，图文成对、留白多，适合旅行手记。',
+  builtin: true,
+  page: page({ safeMargin: 16, gutter: 14 }),
+  grouping: { maxImagesPerGroup: 6 },
+  layout: {
+    cover: true,
+    chapters: true,
+    allow: ['T01', 'T02', 'T03', 'T04', 'T08', 'T09'],
+    weights: { T03: 1.4, T02: 1.2, T08: 1.25 },
+    aiTag: 'vertical-jp',
+    readingOrder: 'rtl',
+    writingMode: 'vertical-rl',
+    avoidFaces: true,
+  },
+};
+
+export const BUILTIN_STYLES: BookStyle[] = [CLASSIC, GALLERY, MAGAZINE, CINEMA, ZINE, POCKET, CLASSIC_CN, VERTICAL_JP];
 
 export function defaultStyle(): BookStyle {
   return CLASSIC;
@@ -309,6 +364,16 @@ function parseLayout(raw: unknown): StyleLayout {
     chapters: flag(source.chapters, true),
     allow: [...new Set(allow)],
     weights,
+    aiTag:
+      source.aiTag === 'album' ||
+      source.aiTag === 'magazine' ||
+      source.aiTag === 'classic-cn' ||
+      source.aiTag === 'vertical-jp'
+        ? source.aiTag
+        : undefined,
+    readingOrder: source.readingOrder === 'rtl' ? 'rtl' : source.readingOrder === 'ltr' ? 'ltr' : undefined,
+    writingMode: source.writingMode === 'vertical-rl' ? 'vertical-rl' : source.writingMode === 'horizontal-tb' ? 'horizontal-tb' : undefined,
+    avoidFaces: Boolean(source.avoidFaces),
   };
 }
 

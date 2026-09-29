@@ -3,14 +3,16 @@ import type { Asset, Group, Page, PageSpec } from '../../shared/types';
 import { balanceTextPages, generatePages, pageNumberFrame, sideForIndex } from './generate';
 import { frameGap, templateById } from './templates';
 import { templatePool, type BookStyle } from './bookStyle';
-import type { TemplateContext } from './types';
+import type { SplitLayoutParameters, TemplateContext } from './types';
 import { parsePhotoName } from '../analysis/filename';
 import { buildDigest, type StoryDigest } from './storyOrder';
+import { paginateBodyFlows } from './bodyFlow';
 
 export interface LayoutPlanPage {
   templateId: string;
   assetIds: string[];
   chapterTitle?: string | null;
+  layoutParams?: SplitLayoutParameters;
 }
 
 export interface LayoutPlan {
@@ -25,13 +27,13 @@ export interface MaterializeResult {
 const TEMPLATE_COUNTS: Record<string, { minImages: number; maxImages: number; maxTexts: number; spread?: boolean }> = {
   T01: { minImages: 1, maxImages: 1, maxTexts: 1 },
   T02: { minImages: 1, maxImages: 1, maxTexts: 1 },
-  T03: { minImages: 1, maxImages: 1, maxTexts: 1 },
+  T03: { minImages: 1, maxImages: 1, maxTexts: 6 },
   T04: { minImages: 2, maxImages: 2, maxTexts: 1 },
   T05: { minImages: 3, maxImages: 3, maxTexts: 1 },
   T06: { minImages: 3, maxImages: 3, maxTexts: 1 },
   T07: { minImages: 4, maxImages: 4, maxTexts: 1 },
-  T08: { minImages: 0, maxImages: 0, maxTexts: 1 },
-  T09: { minImages: 0, maxImages: 1, maxTexts: 0 },
+  T08: { minImages: 0, maxImages: 0, maxTexts: 8 },
+  T09: { minImages: 0, maxImages: 1, maxTexts: 4 },
   T10: { minImages: 1, maxImages: 1, maxTexts: 0, spread: true },
 };
 
@@ -105,7 +107,7 @@ export function materializeAiPlan(
   const pages: Page[] = [];
   const wantCover = style ? style.layout.cover : true;
 
-  const pushFrom = (templateId: string, ids: string[], chapterTitle?: string | null) => {
+  const pushFrom = (templateId: string, ids: string[], chapterTitle?: string | null, layoutParams?: SplitLayoutParameters) => {
     const available = [...new Set((ids || []).filter((id) => byAsset.has(id) && !used.has(id)))];
     let id = pool.has(templateId) ? templateId : fallbackId(
       splitAssets(available, byAsset).images.length,
@@ -136,6 +138,9 @@ export function materializeAiPlan(
       gap: frameGap(spec),
       pageIndex: pages.length,
       chapterTitle: chapterTitle || undefined,
+      layoutParams: id === 'T03' ? layoutParams : undefined,
+      writingMode: style?.layout.writingMode,
+      avoidFaces: style?.layout.avoidFaces,
     };
     if (!def.accepts(ctx) && id !== 'T09') {
       const fallback = templateById(fallbackId(images.length, texts.length));
@@ -148,7 +153,9 @@ export function materializeAiPlan(
       side: sideForIndex(pages.length),
       pageIndex: pages.length,
     });
-    pages.push(makePage(pages.length, id, built, spec));
+    pages.push(makePage(pages.length, id, built, spec, {
+      layoutParams: id === 'T03' ? ctx.layoutParams : undefined,
+    }));
     for (const frame of built) {
       if (frame.assetId) used.add(frame.assetId);
     }
@@ -176,7 +183,7 @@ export function materializeAiPlan(
       warnings.push('已补封面');
     }
   } else if (firstIsCover) {
-    pushFrom('T01', first.assetIds, first.chapterTitle);
+    pushFrom('T01', first.assetIds, first.chapterTitle, first.layoutParams);
     start = 1;
   }
 
@@ -186,7 +193,7 @@ export function materializeAiPlan(
       warnings.push(`忽略未知模板 ${id}`);
       continue;
     }
-    pushFrom(id, page.assetIds || [], page.chapterTitle);
+    pushFrom(id, page.assetIds || [], page.chapterTitle, page.layoutParams);
   }
 
   const leftover = assets.filter((asset) => !used.has(asset.id) && (asset.kind === 'image' || asset.kind === 'text'));
@@ -208,7 +215,7 @@ export function materializeAiPlan(
     if (extra.length) warnings.push(`有 ${leftover.length} 张素材已按规则补页`);
   }
 
-  const balanced = balanceTextPages(pages, spec);
+  const balanced = paginateBodyFlows(balanceTextPages(pages, spec), spec, assets);
   if (balanced.length % 2 === 1) {
     balanced.push({
       id: makeId('pg'),
@@ -220,6 +227,13 @@ export function materializeAiPlan(
       isBlank: true,
     });
   }
-  const reindexed = balanced.map((page, index) => ({ ...page, index }));
+  const reindexed = balanced.map((page, index) => ({
+    ...page, index,
+    frames: style?.layout.writingMode === 'vertical-rl'
+      ? page.frames.map((frame) => frame.kind === 'text' && frame.textRole !== 'pageNumber'
+        ? { ...frame, writingMode: 'vertical-rl' as const, align: 'right' as const }
+        : frame)
+      : page.frames,
+  }));
   return { pages: reindexed, warnings };
 }

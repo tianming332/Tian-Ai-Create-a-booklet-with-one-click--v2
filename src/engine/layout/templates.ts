@@ -14,7 +14,8 @@ import { makeId } from '../../shared/ids';
 import type { Asset, LayoutFrame, PageSpec, TextRole } from '../../shared/types';
 import type { Mm } from '../../shared/units';
 import { textBlockHeight } from './style';
-import type { TemplateContext, TemplateDefinition } from './types';
+import type { SplitImageSide, TemplateContext, TemplateDefinition } from './types';
+import { assignTextSlots, buildTextSlotFrames, STRUCTURED_TEXT_SLOTS } from './textSlots';
 
 /** Gap between sibling frames, scaled with the page size. */
 export function frameGap(spec: PageSpec): Mm {
@@ -105,13 +106,26 @@ function overlayCaption(
   if (!asset) return undefined;
   const h = textBlockHeight(ctx.spec, 'caption', captionLines(asset));
   const inset = Math.max(2.5, ctx.gap * 0.65);
+  const w = Math.max(1, area.w - inset * 2);
+  const candidates: Rect[] = [
+    { x: area.x + inset, y: area.y + area.h - h - inset, w, h },
+    { x: area.x + inset, y: area.y + inset, w, h },
+    { x: area.x + inset, y: area.y + (area.h - h) / 2, w, h },
+  ];
+  const faces = ctx.avoidFaces ? image?.faces ?? [] : [];
+  const overlapsFace = (candidate: Rect) => faces.some((face) => {
+    const pad = Math.max(2, inset * 0.5);
+    const region = {
+      x: area.x + face.x * area.w - pad, y: area.y + face.y * area.h - pad,
+      w: face.w * area.w + pad * 2, h: face.h * area.h + pad * 2,
+    };
+    return candidate.x < region.x + region.w && candidate.x + candidate.w > region.x
+      && candidate.y < region.y + region.h && candidate.y + candidate.h > region.y;
+  });
+  const safe = candidates.find((candidate) => !overlapsFace(candidate));
+  if (!safe) return undefined;
   return textFrame(
-    {
-      x: area.x + inset,
-      y: area.y + area.h - h - inset,
-      w: Math.max(1, area.w - inset * 2),
-      h,
-    },
+    safe,
     'caption',
     asset,
     { ...overlayColors(image) },
@@ -140,6 +154,7 @@ const isPanorama = (asset: Asset | undefined) => aspectOf(asset) >= VISUAL_THRES
 const T01: TemplateDefinition = {
   id: 'T01',
   name: '满版主图',
+  family: 'hero',
   tags: ['hero'],
   density: 1,
   minImages: 1,
@@ -166,6 +181,7 @@ const T01: TemplateDefinition = {
 const T02: TemplateDefinition = {
   id: 'T02',
   name: '留白单图',
+  family: 'framed',
   tags: ['quiet'],
   density: 2,
   minImages: 1,
@@ -183,25 +199,56 @@ const T02: TemplateDefinition = {
   },
 };
 
-/** T03 — Image + Text: image on top, a sentence or body block underneath. */
+function resolveSplitImageSide(requested: SplitImageSide | undefined, pageSide: TemplateContext['side']): 'left' | 'right' {
+  if (requested === 'left' || requested === 'right') return requested;
+  if (requested === 'inner') return pageSide === 'left' ? 'right' : 'left';
+  // Auto follows the editorial default: image toward the fore-edge, text
+  // toward the gutter. A single page uses image-left for familiar LTR flow.
+  if (requested === 'outer' || requested === 'auto' || !requested) return pageSide === 'right' ? 'right' : 'left';
+  return 'left';
+}
+
+/** T03 — Parameterised Split: one image and a semantic text column. */
 const T03: TemplateDefinition = {
   id: 'T03',
   name: '图文',
+  family: 'split',
   tags: ['quiet', 'text'],
   density: 2,
   minImages: 1,
   maxImages: 1,
-  maxTexts: 1,
+  maxTexts: 6,
+  textSlots: STRUCTURED_TEXT_SLOTS,
   accepts: (ctx) => ctx.images.length === 1 && ctx.texts.length >= 1,
-  aspectFit: (ctx) => (aspectOf(ctx.images[0]) >= 0.9 ? 0.9 : 0.66),
+  aspectFit: (ctx) => (aspectOf(ctx.images[0]) < 1.35 ? 0.92 : 0.76),
   build: (ctx) => {
     const live = safeRect(ctx.spec, ctx.side);
-    const [top, bottom] = splitRowsWeighted(live, 0.62, ctx.gap * 1.5);
-    const asset = ctx.texts[0];
-    const role: TextRole = asset?.textFeatures?.lengthClass === 'short' ? 'sentence' : 'body';
+    const ratio = Math.max(0.34, Math.min(0.68, ctx.layoutParams?.imageRatio ?? 0.52));
+    const imageSide = resolveSplitImageSide(ctx.layoutParams?.imageSide, ctx.side);
+    const firstRatio = imageSide === 'left' ? ratio : 1 - ratio;
+    const [left, right] = splitColumnsWeighted(live, firstRatio, ctx.gap * 1.5);
+    const imageColumn = imageSide === 'left' ? left : right;
+    const textColumn = imageSide === 'left' ? right : left;
+    const assigned = assignTextSlots(ctx.texts, STRUCTURED_TEXT_SLOTS);
+    const captionSlots = assigned.filter((slot) => slot.definition.id === 'caption');
+    const contentSlots = assigned.filter((slot) => slot.definition.id !== 'caption');
+    const captionFrames = buildTextSlotFrames(ctx.spec, imageColumn, ctx.gap, captionSlots);
+    const captionHeight = captionFrames.reduce((sum, frame) => sum + frame.h, 0)
+      + Math.max(0, captionFrames.length - 1) * Math.max(1.8, ctx.gap * 0.65);
+    const imageRect = captionFrames.length
+      ? { ...imageColumn, h: Math.max(1, imageColumn.h - captionHeight - ctx.gap) }
+      : imageColumn;
+    if (captionFrames.length) {
+      let y = imageRect.y + imageRect.h + ctx.gap;
+      for (const frame of captionFrames) {
+        frame.y = y;
+        y += frame.h + Math.max(1.8, ctx.gap * 0.65);
+      }
+    }
     return [
-      imageFrame(top, ctx.images[0]),
-      textFrame(bottom, role, asset),
+      imageFrame(imageRect, ctx.images[0], { fit: 'fit' }),
+      ...captionFrames,
+      ...buildTextSlotFrames(ctx.spec, textColumn, ctx.gap, contentSlots),
     ];
   },
 };
@@ -210,6 +257,7 @@ const T03: TemplateDefinition = {
 const T04: TemplateDefinition = {
   id: 'T04',
   name: '双图',
+  family: 'grid',
   tags: ['dual'],
   density: 3,
   minImages: 2,
@@ -237,6 +285,7 @@ const T04: TemplateDefinition = {
 const T05: TemplateDefinition = {
   id: 'T05',
   name: '主图配两图',
+  family: 'grid',
   tags: ['hero', 'grid'],
   density: 3,
   minImages: 3,
@@ -263,6 +312,7 @@ const T05: TemplateDefinition = {
 const T06: TemplateDefinition = {
   id: 'T06',
   name: '三格',
+  family: 'grid',
   tags: ['grid'],
   density: 4,
   minImages: 3,
@@ -289,6 +339,7 @@ const T06: TemplateDefinition = {
 const T07: TemplateDefinition = {
   id: 'T07',
   name: '四格',
+  family: 'grid',
   tags: ['grid'],
   density: 5,
   minImages: 4,
@@ -311,59 +362,81 @@ const T07: TemplateDefinition = {
 const T08: TemplateDefinition = {
   id: 'T08',
   name: '文字页',
+  family: 'text',
   tags: ['text', 'quiet'],
   density: 1,
   minImages: 0,
   maxImages: 0,
-  maxTexts: 1,
-  accepts: (ctx) => ctx.images.length === 0 && ctx.texts.length === 1,
+  maxTexts: 8,
+  textSlots: STRUCTURED_TEXT_SLOTS,
+  accepts: (ctx) => ctx.images.length === 0 && ctx.texts.length >= 1,
   aspectFit: () => 0.8,
   build: (ctx) => {
     const live = insetRect(safeRect(ctx.spec, ctx.side), ctx.gap * 2);
-    const asset = ctx.texts[0];
-    const cls = asset?.textFeatures?.lengthClass;
-    const long = cls === 'long' || cls === 'tooLong';
-    const role: TextRole = long ? 'body' : 'sentence';
-    const h = long ? live.h : Math.min(live.h, textBlockHeight(ctx.spec, 'sentence', 5));
-    return [
-      textFrame({ x: live.x, y: live.y + (live.h - h) / 2, w: live.w, h }, role, asset, {
-        align: long ? 'left' : 'center',
-      }),
-    ];
+    const assigned = assignTextSlots(ctx.texts, STRUCTURED_TEXT_SLOTS);
+    const frames = buildTextSlotFrames(ctx.spec, live, ctx.gap, assigned);
+    const onlyDisplay = frames.length === 1 && frames[0].textRole !== 'body';
+    if (onlyDisplay) {
+      const frame = frames[0];
+      frame.y = live.y + (live.h - frame.h) / 2;
+      frame.align = 'center';
+    }
+    return frames;
   },
 };
 
-/** T09 — Chapter Divider: generated title, optional accent image. */
+/** T09 — Chapter Divider: generated or imported title, supporting metadata /
+ * lead, and an optional accent image. */
 const T09: TemplateDefinition = {
   id: 'T09',
   name: '章节页',
+  family: 'chapter',
   tags: ['chapter', 'quiet'],
   density: 1,
   minImages: 0,
   maxImages: 1,
-  maxTexts: 0,
-  accepts: (ctx) => Boolean(ctx.chapterTitle) && ctx.images.length <= 1,
+  maxTexts: 4,
+  textSlots: STRUCTURED_TEXT_SLOTS,
+  accepts: (ctx) => Boolean(ctx.chapterTitle || ctx.texts.length) && ctx.images.length <= 1,
   aspectFit: () => 0.85,
   build: (ctx) => {
     const live = safeRect(ctx.spec, ctx.side);
-    const titleHeight = textBlockHeight(ctx.spec, 'chapterTitle', 2);
+    const assigned = assignTextSlots(ctx.texts, STRUCTURED_TEXT_SLOTS);
+    const hasImportedTitle = assigned.some((slot) => slot.definition.id === 'title' && slot.assets.length);
+    // A generated chapter label is only a fallback. Never duplicate an
+    // imported heading from the same document.
+    const generatedTitle = !hasImportedTitle && ctx.chapterTitle
+      ? textFrame({ x: 0, y: 0, w: 1, h: 1 }, 'chapterTitle', undefined, { textOverride: ctx.chapterTitle })
+      : undefined;
     if (ctx.images.length === 0) {
-      return [
-        textFrame(
-          { x: live.x, y: live.y + live.h * 0.38, w: live.w, h: titleHeight },
-          'chapterTitle',
-          undefined,
-          { textOverride: ctx.chapterTitle },
-        ),
-      ];
+      const area = { x: live.x, y: live.y + live.h * 0.2, w: live.w, h: live.h * 0.6 };
+      const titleHeight = generatedTitle ? textBlockHeight(ctx.spec, 'chapterTitle', 2) : 0;
+      const contentArea = generatedTitle && assigned.some((slot) => slot.assets.length)
+        ? { ...area, y: area.y + titleHeight + ctx.gap, h: area.h - titleHeight - ctx.gap }
+        : area;
+      const frames = buildTextSlotFrames(ctx.spec, contentArea, ctx.gap, assigned);
+      if (generatedTitle) {
+        Object.assign(generatedTitle, {
+          x: area.x, y: area.y + (frames.length ? 0 : (area.h - titleHeight) / 2), w: area.w, h: titleHeight,
+        });
+        frames.unshift(generatedTitle);
+      }
+      return frames;
     }
     const [left, right] = splitColumnsWeighted(live, 0.46, ctx.gap * 1.5);
-    return [
-      textFrame({ x: left.x, y: left.y + left.h * 0.34, w: left.w, h: titleHeight }, 'chapterTitle', undefined, {
-        textOverride: ctx.chapterTitle,
-      }),
-      imageFrame(right, ctx.images[0]),
-    ];
+    const textArea = { x: left.x, y: left.y + left.h * 0.18, w: left.w, h: left.h * 0.64 };
+    const titleHeight = generatedTitle ? textBlockHeight(ctx.spec, 'chapterTitle', 2) : 0;
+    const contentArea = generatedTitle && assigned.some((slot) => slot.assets.length)
+      ? { ...textArea, y: textArea.y + titleHeight + ctx.gap, h: textArea.h - titleHeight - ctx.gap }
+      : textArea;
+    const frames = buildTextSlotFrames(ctx.spec, contentArea, ctx.gap, assigned);
+    if (generatedTitle) {
+      Object.assign(generatedTitle, {
+        x: textArea.x, y: textArea.y + (frames.length ? 0 : (textArea.h - titleHeight) / 2), w: textArea.w, h: titleHeight,
+      });
+      frames.unshift(generatedTitle);
+    }
+    return [...frames, imageFrame(right, ctx.images[0])];
   },
 };
 
@@ -371,6 +444,7 @@ const T09: TemplateDefinition = {
 const T10: TemplateDefinition = {
   id: 'T10',
   name: '跨页全景',
+  family: 'spread',
   tags: ['panorama', 'hero'],
   density: 1,
   minImages: 1,

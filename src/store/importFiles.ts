@@ -2,6 +2,7 @@ import { PARAMS } from '../shared/constants';
 import { makeId } from '../shared/ids';
 import type { Asset, AssetError } from '../shared/types';
 import { readExif } from '../engine/analysis/exif';
+import { parseTextDocument } from '../engine/text/structure';
 import { putBlob } from './media';
 
 const IMAGE_TYPES = new Set([
@@ -90,17 +91,17 @@ export async function importFiles(
 
     if (TEXT_PATTERN.test(file.name) || file.type.startsWith('text/')) {
       const raw = await file.text();
-      const blocks = splitTextBlocks(raw);
-      if (blocks.length === 0) {
+      const textAssets = textAssetsFromRaw(raw, index, file.name);
+      if (textAssets.length === 0) {
         errors.push({ fileName: file.name, reason: '文本内容为空', level: 'assetError' });
         continue;
       }
-      for (const block of blocks) {
+      for (const asset of textAssets) {
         if (existingCount + assets.length >= PARAMS.hardMaxAssets) {
           capped = true;
           break;
         }
-        assets.push(textAsset(block, index, file.name));
+        assets.push(asset);
         index += 1;
       }
       continue;
@@ -116,13 +117,32 @@ export async function importFiles(
   return { assets, errors, capped };
 }
 
-export function textAsset(text: string, importIndex: number, fileName?: string): Asset {
+/** Creates one compatible Asset per semantic block while retaining a shared
+ * document id. This lets the existing paginator place every long-form fragment. */
+export function textAssetsFromRaw(raw: string, startIndex: number, fileName?: string): Asset[] {
+  const document = parseTextDocument(raw);
+  return document.blocks.map((block, offset) =>
+    textAsset(block.text, startIndex + offset, fileName, block, document.id),
+  );
+}
+
+export function textAsset(
+  text: string,
+  importIndex: number,
+  fileName?: string,
+  block?: Asset['textBlock'],
+  sourceDocumentId?: string,
+): Asset {
+  const document = block ? undefined : parseTextDocument(text);
+  const parsed = block ?? document?.blocks[0];
   return {
     id: makeId('ast'),
     kind: 'text',
     importIndex,
     meta: { fileName, mimeType: 'text/plain', byteSize: text.length },
     text,
+    textBlock: parsed,
+    sourceDocumentId: sourceDocumentId ?? document?.id,
     analysisStatus: 'pending',
     warnings: [],
   };

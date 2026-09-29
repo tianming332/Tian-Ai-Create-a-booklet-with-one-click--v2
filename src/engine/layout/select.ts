@@ -4,6 +4,7 @@ import type { Asset, LayoutFrame } from '../../shared/types';
 import { meanCropLoss } from './templates';
 import { repetitionFit, rhythmAllows, rhythmFit } from './rhythm';
 import type { RhythmState, TemplateContext, TemplateDefinition, TemplateScore } from './types';
+import { slotCoverage } from './textSlots';
 
 export const SCORE_WEIGHTS = {
   assetCount: 0.3,
@@ -53,7 +54,11 @@ function assetCountFit(used: number, remaining: number): number {
 
 function textFit(ctx: TemplateContext, def: TemplateDefinition, remainingTexts: number): number {
   const hosted = ctx.texts.length;
-  if (hosted > 0) return def.maxTexts >= hosted ? 1 : 0.3;
+  if (hosted > 0) {
+    const capacity = def.maxTexts >= hosted ? 1 : 0.3;
+    const semantic = def.textSlots ? slotCoverage(ctx.texts, def.textSlots) : 1;
+    return capacity * (0.45 + semantic * 0.55);
+  }
   if (remainingTexts > 0) return def.maxTexts > 0 ? 0.6 : 0.45;
   return 0.85;
 }

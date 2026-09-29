@@ -101,6 +101,39 @@ export function Inspector(props: { onCollapse: () => void }): JSX.Element {
             </button>
           </div>
         </div>
+        {def?.family === 'split' && (
+          <div>
+            <label>
+              左右图文<em>split</em>
+            </label>
+            <div className="chips">
+              {([
+                ['auto', '自动镜像'], ['outer', '图片靠书口'], ['inner', '图片靠书脊'],
+                ['left', '图片在左'], ['right', '图片在右'],
+              ] as const).map(([value, label]) => (
+                <button
+                  key={value}
+                  className={(page.layoutParams?.imageSide ?? 'auto') === value ? 'chip active' : 'chip'}
+                  onClick={() => store.setSplitLayout(page.id, { imageSide: value })}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <label htmlFor="split-ratio">
+              图片宽度 {Math.round((page.layoutParams?.imageRatio ?? 0.52) * 100)}%<em>image ratio</em>
+            </label>
+            <input
+              id="split-ratio"
+              type="range"
+              min={0.34}
+              max={0.68}
+              step={0.01}
+              value={page.layoutParams?.imageRatio ?? 0.52}
+              onChange={(event) => store.setSplitLayout(page.id, { imageRatio: Number(event.target.value) })}
+            />
+          </div>
+        )}
         <div>
           <label>
             页面操作<em>page</em>

@@ -3,7 +3,8 @@ import { AnalyzerPool } from '../engine/analysis/pool';
 import { analyzeTexts } from '../engine/analysis/text';
 import { defaultGroupingSettings, defaultPageSpec, PARAMS } from '../shared/constants';
 import { makeId } from '../shared/ids';
-import type { AssetError, Focus, GroupingSettings, LayoutFrame, PageSpec } from '../shared/types';
+import type { AssetError, Focus, GroupingSettings, LayoutFrame, PageSpec, TextBlockRole } from '../shared/types';
+import type { SplitLayoutParameters } from '../engine/layout/types';
 import { defaultStyle, type BookStyle } from '../engine/layout/bookStyle';
 import type { PreviewOverlays } from '../render/preview';
 import * as cmd from './commands';
@@ -66,6 +67,7 @@ export interface ProjectStore extends BookState {
   setToast: (message: string | null) => void;
 
   setPageTemplate: (pageId: string, templateId: string) => void;
+  setSplitLayout: (pageId: string, patch: Partial<SplitLayoutParameters>) => void;
   splitSpread: (pageId: string) => void;
   setFrameFocus: (pageId: string, frameId: string, focus: Focus) => void;
   setFrameFit: (pageId: string, frameId: string, fit: LayoutFrame['fit']) => void;
@@ -82,6 +84,7 @@ export interface ProjectStore extends BookState {
   removeAssets: (assetIds: string[]) => void;
   reorderAsset: (assetId: string, toIndex: number) => void;
   setAssetText: (assetId: string, text: string) => void;
+  setTextBlockRole: (assetId: string, role: TextBlockRole) => void;
   bindCaption: (textAssetId: string, imageAssetId: string | undefined) => void;
   setPageSpec: (patch: Partial<PageSpec>) => void;
   setGrouping: (patch: Partial<GroupingSettings>) => void;
@@ -274,6 +277,7 @@ export const useProject = create<ProjectStore>()((set, get) => {
 
     setPageTemplate: (pageId, templateId) =>
       apply((book) => cmd.setPageTemplate(book, pageId, templateId)),
+    setSplitLayout: (pageId, patch) => apply((book) => cmd.setSplitLayout(book, pageId, patch)),
     splitSpread: (pageId) => apply((book) => cmd.splitSpread(book, pageId)),
     setFrameFocus: (pageId, frameId, focus) =>
       apply((book) => cmd.setFrameFocus(book, pageId, frameId, focus)),
@@ -291,12 +295,21 @@ export const useProject = create<ProjectStore>()((set, get) => {
     removeAssets: (assetIds) => apply((book) => cmd.removeAssets(book, assetIds)),
     reorderAsset: (assetId, toIndex) => apply((book) => cmd.reorderAsset(book, assetId, toIndex)),
     setAssetText: (assetId, text) => apply((book) => cmd.setAssetText(book, assetId, text)),
+    setTextBlockRole: (assetId, role) => apply((book) => cmd.setTextBlockRole(book, assetId, role)),
     bindCaption: (textAssetId, imageAssetId) =>
       apply((book) =>
         cmd.regenerate({
           ...book,
           assets: book.assets.map((a) =>
-            a.id === textAssetId ? { ...a, boundToAssetId: imageAssetId } : a,
+            a.id === textAssetId
+              ? {
+                  ...a,
+                  boundToAssetId: imageAssetId,
+                  textBlock: a.textBlock
+                    ? { ...a.textBlock, role: imageAssetId ? 'caption' as const : a.textBlock.role }
+                    : a.textBlock,
+                }
+              : a,
           ),
         }),
       ),

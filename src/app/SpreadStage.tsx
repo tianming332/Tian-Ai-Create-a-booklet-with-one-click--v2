@@ -8,7 +8,7 @@ import { buildSpreads, useElementSize, usePageImages } from './hooks';
 export function SpreadStage({ fontsVersion }: { fontsVersion: number }): JSX.Element {
   const store = useProject();
   const { pages, assets, pageSpec, view } = store;
-  const spreads = useMemo(() => buildSpreads(pages), [pages]);
+  const spreads = useMemo(() => buildSpreads(pages, store.style.layout.readingOrder), [pages, store.style.layout.readingOrder]);
   const spread = spreads[Math.min(view.spreadIndex, Math.max(0, spreads.length - 1))];
   const visible = useMemo(() => spread?.pages ?? [], [spread]);
   const images = usePageImages(visible, assets);

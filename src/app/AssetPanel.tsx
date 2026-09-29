@@ -3,6 +3,8 @@ import type { MouseEvent as ReactMouseEvent } from 'react';
 import type { Asset } from '../shared/types';
 import { thumbUrl } from '../store/media';
 import { useProject } from '../store/useProject';
+import { bestRelation } from '../engine/relations/textImage';
+import { roleLabel, TEXT_BLOCK_ROLES } from '../engine/text/structure';
 
 /** Left panel: imported material in reading order, with light re-ordering. */
 export function AssetPanel(props: { onCollapse: () => void }): JSX.Element {
@@ -13,6 +15,8 @@ export function AssetPanel(props: { onCollapse: () => void }): JSX.Element {
   const removeAssets = useProject((s) => s.removeAssets);
   const reorderAsset = useProject((s) => s.reorderAsset);
   const setAssetText = useProject((s) => s.setAssetText);
+  const setTextBlockRole = useProject((s) => s.setTextBlockRole);
+  const relations = useProject((s) => s.textImageRelations ?? []);
   const input = useRef<HTMLInputElement>(null);
 
   const ordered = useMemo(
@@ -60,7 +64,22 @@ export function AssetPanel(props: { onCollapse: () => void }): JSX.Element {
           />
         ))}
         {current?.kind === 'text' && (
-          <div>
+          <div className="text-structure-editor">
+            {current.textBlock ? (
+              <>
+                <label htmlFor="asset-text-role">文字结构</label>
+                <select id="asset-text-role" value={current.textBlock.role} onChange={(event) => setTextBlockRole(current.id, event.target.value as typeof current.textBlock.role)}>
+                  {TEXT_BLOCK_ROLES.map((role) => <option key={role} value={role}>{roleLabel(role)}</option>)}
+                </select>
+                <div className="text-block-summary">
+                  <span className="role-badge">{roleLabel(current.textBlock.role)}</span>
+                  {current.textBlock.decorative ? <span>可作装饰排版</span> : null}
+                  {current.textBlock.allowSplit ? <span>可续排到后页</span> : null}
+                </div>
+                {current.textBlock.entities.length ? <div className="entity-list">{current.textBlock.entities.map((entity, index) => <span className={`entity entity-${entity.type}`} key={`${entity.type}-${entity.value}-${index}`}>{entity.type} · {entity.value}</span>)}</div> : null}
+                <RelationSummary asset={current} assets={assets} relations={relations} />
+              </>
+            ) : null}
             <label htmlFor="asset-text">文字内容</label>
             <textarea
               id="asset-text"
@@ -73,6 +92,13 @@ export function AssetPanel(props: { onCollapse: () => void }): JSX.Element {
       </div>
     </aside>
   );
+}
+
+function RelationSummary(props: { asset: Asset; assets: Asset[]; relations: import('../shared/types').TextImageRelation[] }): JSX.Element {
+  const relation = bestRelation(props.relations, props.asset.id);
+  if (!relation) return <p className="relation-summary weak">暂未找到可靠的关联图片，将作为独立文字编排。</p>;
+  const image = props.assets.find((asset) => asset.id === relation.imageId);
+  return <div className={`relation-summary${relation.score >= 0.75 ? ' strong' : relation.score >= 0.45 ? ' medium' : ' weak'}`}><strong>关联图片 {Math.round(relation.score * 100)}%</strong><span>{image?.meta.fileName ?? relation.imageId}</span><small>{relation.reasons.join(' · ')}</small></div>;
 }
 
 interface AssetRowProps {

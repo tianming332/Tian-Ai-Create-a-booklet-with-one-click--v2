@@ -156,7 +156,14 @@ function drawTextFrame(input: RenderPageInput, frame: LayoutFrame, px: (mm: Mm) 
   ctx.textBaseline = 'alphabetic';
   ctx.textAlign = 'left';
   for (const line of placed.lines) {
-    ctx.fillText(line.text, px(line.xMm), px(line.baselineMm));
+    const rotate = placed.vertical && /[A-Za-z0-9]/.test(line.text);
+    if (rotate) {
+      ctx.save();
+      ctx.translate(px(line.xMm + line.widthMm / 2), px(line.baselineMm - placed.lineHeightMm * 0.4));
+      ctx.rotate(Math.PI / 2);
+      ctx.fillText(line.text, -px(line.widthMm / 2), 0);
+      ctx.restore();
+    } else ctx.fillText(line.text, px(line.xMm), px(line.baselineMm));
   }
   ctx.restore();
 }

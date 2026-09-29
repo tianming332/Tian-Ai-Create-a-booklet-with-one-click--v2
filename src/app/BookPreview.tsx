@@ -83,7 +83,7 @@ function caption(pages: Page[]): string {
 export function BookPreview({ fontsVersion }: { fontsVersion: number }): JSX.Element {
   const store = useProject();
   const { pages, assets, pageSpec } = store;
-  const spreads = useMemo(() => buildSpreads(pages), [pages]);
+  const spreads = useMemo(() => buildSpreads(pages, store.style.layout.readingOrder), [pages, store.style.layout.readingOrder]);
   const assetMap = useMemo(() => new Map(assets.map((a) => [a.id, a])), [assets]);
   const [ref, size] = useElementSize<HTMLDivElement>();
 
@@ -147,7 +147,7 @@ export function BookPreview({ fontsVersion }: { fontsVersion: number }): JSX.Ele
 
       {spreads.length > 0 ? (
         <footer className="book-end">
-          <span className="hint">全书结束 · 顶部可以重新排版、进入编辑或导出 PDF</span>
+          <span className="hint">全书结束 · 顶部可以换模版重排、进入编辑、清空项目或导出 PDF</span>
         </footer>
       ) : null}
     </div>

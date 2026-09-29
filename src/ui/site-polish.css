@@ -1,0 +1,31 @@
+/* AutoBook chrome: calm editor surfaces; never style/export the printable canvases. */
+html[data-tjm-ui="autobook"] body { --tjm-ui-accent:var(--sel,#2f6bff); }
+html[data-tjm-ui="autobook"] .landing>.drop { max-width:800px;border-radius:26px;padding:clamp(28px,4vw,58px);box-shadow:0 22px 70px rgba(36,52,78,.09),inset 0 1px 0 rgba(255,255,255,.8); }
+html[data-tjm-ui="autobook"] .drop h1 { letter-spacing:-.06em;line-height:1.18; }
+html[data-tjm-ui="autobook"] .drop>p { max-width:560px;margin-inline:auto;font-size:13px;line-height:1.95; }
+html[data-tjm-ui="autobook"] .drop>.latin { letter-spacing:.2em; }
+html[data-tjm-ui="autobook"] .drop textarea { border-radius:12px;padding:14px;line-height:1.8;background:color-mix(in srgb,var(--panel) 85%,transparent); }
+html[data-tjm-ui="autobook"] .drop .actions button { min-height:40px;padding-inline:19px; }
+html[data-tjm-ui="autobook"] .toolbar { box-shadow:0 5px 20px rgba(36,52,78,.055); }
+html[data-tjm-ui="autobook"] :is(.side,.rail) { box-shadow:inset 0 1px 0 var(--glass-highlight); }
+html[data-tjm-ui="autobook"] .side h3 { padding-bottom:14px;border-bottom:1px solid var(--line); }
+html[data-tjm-ui="autobook"] .composer { box-shadow:0 12px 38px rgba(36,52,78,.055); }
+html[data-tjm-ui="autobook"] .composer>header h1 { line-height:1.3;letter-spacing:-.04em; }
+html[data-tjm-ui="autobook"] .style-card { border-radius:16px;box-shadow:inset 0 1px 0 var(--glass-highlight),0 4px 14px rgba(36,52,78,.04);transition:translate .4s var(--tjm-ui-ease),border-color .25s,box-shadow .3s; }
+html[data-tjm-ui="autobook"] .style-card:hover { translate:0 -3px;box-shadow:0 12px 28px rgba(36,52,78,.1); }
+html[data-tjm-ui="autobook"] .style-card.active { border-color:var(--sel);box-shadow:0 0 0 2px color-mix(in srgb,var(--sel) 12%,transparent); }
+html[data-tjm-ui="autobook"] .asset { border-radius:11px;box-shadow:0 3px 12px rgba(36,52,78,.035); }
+html[data-tjm-ui="autobook"] .strip { box-shadow:0 -5px 18px rgba(36,52,78,.04); }
+html[data-tjm-ui="autobook"] :is(.modal .card,.drawer) { box-shadow:0 24px 80px rgba(20,30,50,.22); }
+html[data-tjm-ui="autobook"] .modal .card { max-height:calc(100dvh - 40px);overflow:auto; }
+html[data-tjm-ui="autobook"] .progress .bar i { transition:width .3s var(--tjm-ui-ease); }
+html[data-tjm-ui="autobook"] .toast { max-width:calc(100vw - 28px);border-radius:12px;line-height:1.6; }
+html[data-tjm-ui="autobook"][data-theme="dark"] .landing>.drop { box-shadow:0 24px 72px rgba(0,0,0,.25),inset 0 1px 0 rgba(255,255,255,.08); }
+@media(max-width:700px){html[data-tjm-ui="autobook"] .landing{padding:18px}html[data-tjm-ui="autobook"] .landing>.drop{padding:28px 20px;border-radius:20px;width:100%}html[data-tjm-ui="autobook"] .drop .actions{flex-wrap:wrap;gap:8px}html[data-tjm-ui="autobook"] .toolbar{gap:8px;flex-wrap:wrap}html[data-tjm-ui="autobook"] .modal .card{max-width:calc(100vw - 24px)}html[data-tjm-ui="autobook"] .composer-actions{flex-wrap:wrap;gap:10px}}
+@media(max-width:900px) {
+  html[data-tjm-ui="autobook"] .workspace { position:relative;overflow:hidden; }
+  html[data-tjm-ui="autobook"] .workspace>.side { position:absolute;z-index:25;inset:0 auto 0 0;width:min(286px,calc(100% - 44px));max-width:100%;background:var(--bg);box-shadow:12px 0 36px rgba(0,0,0,.12); }
+  html[data-tjm-ui="autobook"] .workspace>.side.right { left:auto;right:0;box-shadow:-12px 0 36px rgba(0,0,0,.12); }
+  html[data-tjm-ui="autobook"] .workspace .panel-toggle,html[data-tjm-ui="autobook"] .workspace>.rail button { min-width:30px;min-height:34px; }
+  html[data-tjm-ui="autobook"] .stage { padding:12px; }
+}

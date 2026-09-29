@@ -2,10 +2,12 @@ import { describe, expect, it } from 'vitest';
 import {
   createApproxMeasure,
   layoutText,
+  flowBodyText,
   segmentUnits,
   wrapUnits,
 } from '../src/engine/text/textLayout';
 import { defaultPageSpec } from '../src/shared/constants';
+import { placeTextFrame } from '../src/render/textBox';
 
 const measure = createApproxMeasure();
 const spec = defaultPageSpec();
@@ -111,6 +113,42 @@ describe('layoutText', () => {
       measure,
     };
     expect(JSON.stringify(layoutText(args))).toBe(JSON.stringify(layoutText(args)));
+  });
+});
+
+describe('flowBodyText', () => {
+  it('continues measured body text without losing or duplicating characters', () => {
+    const text = '这是用于测试实际测量分页的正文内容。'.repeat(24);
+    const result = flowBodyText({
+      text, spec, measure,
+      boxes: Array.from({ length: 8 }, () => ({ w: 55, h: 24 })),
+    });
+    expect(result.fragments.length).toBeGreaterThan(1);
+    expect(result.overflow).toBe(false);
+    expect(result.fragments.map((fragment) => fragment.text).join('')).toBe(text);
+  });
+
+  it('moves a line forward instead of leaving a one-line widow', () => {
+    const text = '天地玄黄宇宙洪荒日月盈昃辰宿列张寒来暑往秋收冬藏';
+    const result = flowBodyText({
+      text, spec, measure,
+      boxes: [{ w: 22, h: 16 }, { w: 22, h: 16 }],
+    });
+    expect(result.fragments).toHaveLength(2);
+    expect(result.fragments.every((fragment) => fragment.lineCount >= 2)).toBe(true);
+  });
+});
+
+describe('vertical writing', () => {
+  it('flows top-to-bottom in columns ordered right-to-left', () => {
+    const placed = placeTextFrame({
+      frame: { id:'v', kind:'text', x:10, y:10, w:30, h:30, textRole:'body', writingMode:'vertical-rl' },
+      spec, text:'天地玄黄宇宙洪荒', measure,
+    });
+    expect(placed.vertical).toBe(true);
+    expect(placed.lines[1].baselineMm).toBeGreaterThan(placed.lines[0].baselineMm);
+    const nextColumn = placed.lines.find((line) => line.xMm < placed.lines[0].xMm - 1);
+    expect(nextColumn).toBeDefined();
   });
 });
 

@@ -122,6 +122,15 @@ textarea:focus {
   border-color: var(--accent);
 }
 
+.text-structure-editor { display:grid; gap:8px; margin-top:14px; padding-top:14px; border-top:1px solid var(--line); }
+.text-structure-editor select { width:100%; }
+.text-block-summary,.entity-list { display:flex; flex-wrap:wrap; gap:6px; align-items:center; font-size:11px; color:var(--muted); }
+.role-badge,.entity { border:1px solid var(--line); border-radius:999px; padding:3px 7px; background:color-mix(in srgb,var(--surface) 82%,transparent); }
+.entity-emotion,.entity-mood,.entity-theme { border-color:color-mix(in srgb,#b86b91 45%,var(--line)); }
+.relation-summary { display:grid; gap:3px; padding:9px 10px; border-left:3px solid #999; background:color-mix(in srgb,var(--surface) 80%,transparent); font-size:11px; }
+.relation-summary.strong { border-left-color:#3f8b69; } .relation-summary.medium { border-left-color:#b68a37; } .relation-summary.weak { border-left-color:#999; color:var(--muted); }
+.relation-summary small { color:var(--muted); line-height:1.45; }
+
 input[type='range'] {
   padding: 0;
   border: none;

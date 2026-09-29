@@ -1,13 +1,16 @@
 import { groupAssets, markNearDuplicates, mergeGroups, splitGroup } from '../engine/grouping/group';
 import { generatePages, pageNumberFrame, sideForIndex } from '../engine/layout/generate';
+import { materializeAiPlan, type LayoutPlan } from '../engine/layout/aiPlan';
 import {
   groupingForStyle,
   specForStyle,
   type BookStyle,
 } from '../engine/layout/bookStyle';
 import { frameGap, TEMPLATES, templateById } from '../engine/layout/templates';
-import type { TemplateContext } from '../engine/layout/types';
+import type { SplitLayoutParameters, TemplateContext } from '../engine/layout/types';
 import { makeId } from '../shared/ids';
+import { buildTextImageRelations, bestRelation } from '../engine/relations/textImage';
+import { parseTextDocument } from '../engine/text/structure';
 import type {
   Asset,
   Focus,
@@ -16,6 +19,8 @@ import type {
   LayoutFrame,
   Page,
   PageSpec,
+  TextBlockRole,
+  TextImageRelation,
 } from '../shared/types';
 
 /** The part of a project that edits and undo/redo operate on. */
@@ -27,6 +32,7 @@ export interface BookState {
   assets: Asset[];
   groups: Group[];
   pages: Page[];
+  textImageRelations?: TextImageRelation[];
 }
 
 function byId(assets: Asset[]): Map<string, Asset> {
@@ -35,11 +41,21 @@ function byId(assets: Asset[]): Map<string, Asset> {
 
 /** Full re-run of grouping + pagination. Used after any structural change. */
 export function regenerate(state: BookState): BookState {
-  const assets = state.assets.map((a) => ({ ...a }));
+  let assets = state.assets.map((asset) => {
+    if (asset.kind !== 'text' || asset.textBlock) return { ...asset };
+    const document = parseTextDocument(asset.text ?? '', asset.sourceDocumentId);
+    return { ...asset, sourceDocumentId: document.id, textBlock: document.blocks[0] };
+  });
+  const textImageRelations = buildTextImageRelations(assets, state.textImageRelations);
+  assets = assets.map((asset) => {
+    if (asset.kind !== 'text' || asset.boundToAssetId) return asset;
+    const relation = bestRelation(textImageRelations, asset.id);
+    return { ...asset, relatedToAssetId: relation && relation.score >= 0.45 ? relation.imageId : undefined };
+  });
   markNearDuplicates(assets);
   const groups = groupAssets(assets, state.grouping);
   const pages = generatePages({ spec: state.pageSpec, assets, groups, style: state.style });
-  return { ...state, assets, groups, pages };
+  return { ...state, assets, groups, pages, textImageRelations };
 }
 
 /**
@@ -58,6 +74,15 @@ export function applyStyle(
     pageSpec: { ...specForStyle(style, state.pageSpec), ...override },
     grouping: groupingForStyle(style, state.grouping),
   });
+}
+
+export function applyAiPlan(state: BookState, plan: LayoutPlan): BookState {
+  const assets = state.assets.map((a) => ({ ...a }));
+  markNearDuplicates(assets);
+  const groups = groupAssets(assets, state.grouping);
+  const { pages } = materializeAiPlan(state.pageSpec, assets, groups, state.style, plan);
+  const textImageRelations = buildTextImageRelations(assets, state.textImageRelations);
+  return { ...state, assets, groups, pages, textImageRelations };
 }
 
 /** Reassigns indexes, page-number frames and gutter sides after a reorder. */
@@ -126,6 +151,9 @@ function contextForPage(state: BookState, page: Page, maxImages: number): Templa
     gap: frameGap(state.pageSpec),
     pageIndex: page.index,
     chapterTitle: chapterFrame?.textOverride,
+    layoutParams: page.layoutParams,
+    writingMode: state.style?.layout.writingMode,
+    avoidFaces: state.style?.layout.avoidFaces,
   };
 }
 
@@ -159,6 +187,7 @@ export function setPageTemplate(state: BookState, pageId: string, templateId: st
   const rebuild = (target: Page): Page => ({
     ...target,
     templateId: def.id,
+    layoutParams: def.family === 'split' ? target.layoutParams : undefined,
     density: def.density,
     frames: def.build(contextForPage(state, target, def.maxImages)),
   });
@@ -168,6 +197,28 @@ export function setPageTemplate(state: BookState, pageId: string, templateId: st
     pages = pages.map((p) => (p.id === secondary.id ? rebuild(secondary) : p));
   }
   return normalize(state, pages);
+}
+
+/** Rebuilds Split geometry while preserving the page's assigned assets. */
+export function setSplitLayout(
+  state: BookState,
+  pageId: string,
+  patch: Partial<SplitLayoutParameters>,
+): BookState {
+  const page = state.pages.find((item) => item.id === pageId);
+  const def = page ? templateById(page.templateId) : undefined;
+  if (!page || def?.family !== 'split') return state;
+  const imageRatio = Math.max(0.34, Math.min(0.68, patch.imageRatio ?? page.layoutParams?.imageRatio ?? 0.52));
+  const layoutParams: SplitLayoutParameters = {
+    imageSide: patch.imageSide ?? page.layoutParams?.imageSide ?? 'auto',
+    imageRatio,
+  };
+  const next = {
+    ...page,
+    layoutParams,
+    frames: def.build({ ...contextForPage(state, page, def.maxImages), layoutParams }),
+  };
+  return normalize(state, state.pages.map((item) => (item.id === page.id ? next : item)));
 }
 
 /** Turns a spread back into a single full-bleed page plus one blank page. */
@@ -219,6 +270,10 @@ export function setFrameText(
   return mapFrame(state, pageId, frameId, (frame) => ({ ...frame, textOverride: text }));
 }
 
+function focusOf(assets: Asset[], assetId?: string): Focus {
+  return assets.find((asset) => asset.id === assetId)?.visual?.focus ?? { x: 0.5, y: 0.4 };
+}
+
 export function setFrameAsset(
   state: BookState,
   pageId: string,
@@ -228,7 +283,7 @@ export function setFrameAsset(
   return mapFrame(state, pageId, frameId, (frame) => ({
     ...frame,
     assetId,
-    focus: { x: 0.5, y: 0.5 },
+    focus: focusOf(state.assets, assetId),
   }));
 }
 
@@ -265,8 +320,8 @@ export function swapFrames(
     return {
       ...page,
       frames: page.frames.map((frame) => {
-        if (frame.id === frameA.id) return { ...frame, assetId: assetB, focus: { x: 0.5, y: 0.5 } };
-        if (frame.id === frameB.id) return { ...frame, assetId: assetA, focus: { x: 0.5, y: 0.5 } };
+        if (frame.id === frameA.id) return { ...frame, assetId: assetB, focus: focusOf(state.assets, assetB) };
+        if (frame.id === frameB.id) return { ...frame, assetId: assetA, focus: focusOf(state.assets, assetA) };
         return frame;
       }),
     };
@@ -339,7 +394,19 @@ export function reorderAsset(state: BookState, assetId: string, toIndex: number)
 }
 
 export function setAssetText(state: BookState, assetId: string, text: string): BookState {
-  const assets = state.assets.map((a) => (a.id === assetId ? { ...a, text } : a));
+  const current = state.assets.find((asset) => asset.id === assetId);
+  const parsed = parseTextDocument(text, current?.sourceDocumentId);
+  const assets = state.assets.map((a) =>
+    a.id === assetId
+      ? {
+          ...a,
+          text,
+          textBlock: parsed.blocks[0]
+            ? { ...parsed.blocks[0], role: a.textBlock?.role ?? parsed.blocks[0].role, parser: a.textBlock?.parser === 'manual' ? 'manual' as const : 'rule' as const }
+            : a.textBlock,
+        }
+      : a,
+  );
   const pages = state.pages.map((page) => ({
     ...page,
     frames: page.frames.map((frame) =>
@@ -348,7 +415,29 @@ export function setAssetText(state: BookState, assetId: string, text: string): B
         : frame,
     ),
   }));
-  return { ...state, assets, pages };
+  return regenerate({ ...state, assets, pages });
+}
+
+export function setTextBlockRole(state: BookState, assetId: string, role: TextBlockRole): BookState {
+  const display = ['heading1', 'heading2', 'heading3', 'lead', 'quote', 'shortSentence'];
+  return regenerate({
+    ...state,
+    assets: state.assets.map((asset) =>
+      asset.id === assetId && asset.textBlock
+        ? {
+            ...asset,
+            textBlock: {
+              ...asset.textBlock,
+              role,
+              parser: 'manual' as const,
+              decorative: display.includes(role),
+              allowOverlay: [...display, 'caption'].includes(role),
+              allowSplit: role === 'body',
+            },
+          }
+        : asset,
+    ),
+  });
 }
 
 export function setPageSpec(state: BookState, patch: Partial<PageSpec>): BookState {

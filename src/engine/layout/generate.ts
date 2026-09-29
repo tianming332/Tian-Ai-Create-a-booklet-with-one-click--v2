@@ -7,6 +7,8 @@ import { bestCandidate, evaluateTemplate, type Candidate } from './select';
 import { initialRhythm, pushRhythm } from './rhythm';
 import type { PageSide, RhythmState, TemplateContext, TemplateDefinition } from './types';
 import { templatePool, templateWeight, type BookStyle } from './bookStyle';
+import { selectTextBundle, STRUCTURED_TEXT_SLOTS } from './textSlots';
+import { paginateBodyFlows } from './bodyFlow';
 
 export interface GenerateOptions {
   spec: PageSpec;
@@ -69,18 +71,18 @@ function coverScore(asset: Asset): number {
 interface Bucket {
   images: Asset[];
   freeTexts: Asset[];
-  captions: Map<string, Asset>;
+  captions: Map<string, Asset[]>;
 }
 
 function bucketFor(group: Group, byId: Map<string, Asset>): Bucket {
   const images: Asset[] = [];
   const freeTexts: Asset[] = [];
-  const captions = new Map<string, Asset>();
+  const captions = new Map<string, Asset[]>();
   for (const id of group.assetIds) {
     const asset = byId.get(id);
     if (!asset) continue;
     if (asset.kind === 'image') images.push(asset);
-    else if (asset.boundToAssetId) captions.set(asset.boundToAssetId, asset);
+    else if (asset.boundToAssetId) captions.set(asset.boundToAssetId, [...(captions.get(asset.boundToAssetId) ?? []), asset]);
     else freeTexts.push(asset);
   }
   return { images, freeTexts, captions };
@@ -95,15 +97,24 @@ function contextFor(
 ): TemplateContext | undefined {
   const images = bucket.images.slice(0, def.maxImages);
   if (images.length < def.minImages) return undefined;
+  // A template must host every caption hard-bound to the images it consumes;
+  // otherwise removing the image would silently orphan the remaining caption.
+  const boundCaptionCount = images.reduce((sum, image) => sum + (bucket.captions.get(image.id)?.length ?? 0), 0);
+  if (boundCaptionCount > def.maxTexts) return undefined;
   const texts: Asset[] = [];
   if (def.maxTexts > 0) {
     for (const image of images) {
-      const caption = bucket.captions.get(image.id);
-      if (caption && texts.length < def.maxTexts) texts.push(caption);
+      const captions = bucket.captions.get(image.id) ?? [];
+      for (const caption of captions) if (texts.length < def.maxTexts) texts.push(caption);
     }
     // Free sentences may headline a calm page (T03/T08) but never a grid.
-    if (texts.length === 0 && def.maxImages <= 1 && bucket.freeTexts.length > 0) {
-      texts.push(bucket.freeTexts[0]);
+    if (def.maxImages <= 1 && bucket.freeTexts.length > 0) {
+      const selected = def.textSlots
+        ? selectTextBundle(bucket.freeTexts, def.textSlots, def.maxTexts - texts.length)
+        : texts.length === 0
+          ? bucket.freeTexts.slice(0, 1)
+          : [];
+      for (const asset of selected) if (!texts.includes(asset) && texts.length < def.maxTexts) texts.push(asset);
     }
   }
   return { spec, side, images, texts, gap: frameGap(spec), pageIndex };
@@ -223,6 +234,8 @@ export function generatePages(options: GenerateOptions): Page[] {
       texts: caption ? [caption] : [],
       gap: frameGap(spec),
       pageIndex: 0,
+      writingMode: style?.layout.writingMode,
+      avoidFaces: style?.layout.avoidFaces,
     };
     pages.push(makePage(0, def.id, def.density, def.build(ctx), undefined, spec));
     rhythm = pushRhythm(rhythm, def, 1);
@@ -241,16 +254,20 @@ export function generatePages(options: GenerateOptions): Page[] {
     if (chapterTitle && bucket.images.length >= 3) {
       const def = templateById('T09')!;
       const index = pages.length;
+      const chapterTexts = selectTextBundle(bucket.freeTexts, STRUCTURED_TEXT_SLOTS, def.maxTexts);
       const ctx: TemplateContext = {
         spec,
         side: sideForIndex(index),
         images: [],
-        texts: [],
+        texts: chapterTexts,
         gap: frameGap(spec),
         pageIndex: index,
         chapterTitle,
+        writingMode: style?.layout.writingMode,
+        avoidFaces: style?.layout.avoidFaces,
       };
       pages.push(makePage(index, def.id, def.density, def.build(ctx), group.id, spec));
+      consume(bucket, ctx);
       rhythm = pushRhythm(rhythm, def, 1);
     }
 
@@ -271,6 +288,8 @@ export function generatePages(options: GenerateOptions): Page[] {
           if (def.spread && side !== 'left') continue;
           const ctx = contextFor(def, bucket, spec, side, index);
           if (!ctx) continue;
+          ctx.writingMode = style?.layout.writingMode;
+          ctx.avoidFaces = style?.layout.avoidFaces;
           const candidate = evaluateTemplate(def, ctx, {
             remainingImages,
             remainingTexts,
@@ -324,7 +343,9 @@ export function generatePages(options: GenerateOptions): Page[] {
     }
   });
 
-  const balanced = balanceTextPages(pages, spec);
+  // Balance independent text pages first. Continuations are inserted afterward
+  // and must stay directly behind the page where their body flow starts.
+  const balanced = paginateBodyFlows(balanceTextPages(pages, spec), spec, assets);
 
   // Books are printed in spreads: keep the page count even.
   if (balanced.length % 2 === 1) {
@@ -338,5 +359,17 @@ export function generatePages(options: GenerateOptions): Page[] {
       isBlank: true,
     });
   }
-  return balanced;
+  return applyWritingProfile(balanced, style);
+}
+
+function applyWritingProfile(pages: Page[], style: BookStyle | undefined): Page[] {
+  if (style?.layout.writingMode !== 'vertical-rl') return pages;
+  return pages.map((page) => ({
+    ...page,
+    frames: page.frames.map((frame) =>
+      frame.kind === 'text' && frame.textRole !== 'pageNumber'
+        ? { ...frame, writingMode: 'vertical-rl' as const, align: 'right' as const }
+        : frame,
+    ),
+  }));
 }

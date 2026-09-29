@@ -11,14 +11,14 @@ export interface SpreadView {
   pages: Page[];
 }
 
-export function buildSpreads(pages: Page[]): SpreadView[] {
+export function buildSpreads(pages: Page[], readingOrder: 'ltr' | 'rtl' = 'ltr'): SpreadView[] {
   const out: SpreadView[] = [];
   let i = 0;
   while (i < pages.length) {
     const page = pages[i];
     const next = pages[i + 1];
     if (page.index !== 0 && sideForIndex(page.index) === 'left' && next && sideForIndex(next.index) === 'right') {
-      out.push({ pages: [page, next] });
+      out.push({ pages: readingOrder === 'rtl' ? [next, page] : [page, next] });
       i += 2;
     } else {
       out.push({ pages: [page] });

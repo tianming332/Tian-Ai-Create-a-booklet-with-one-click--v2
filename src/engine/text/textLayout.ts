@@ -149,6 +149,72 @@ export interface TextLayoutResult {
   shrunk: boolean;
 }
 
+export interface BodyFragment {
+  text: string;
+  start: number;
+  end: number;
+  lineCount: number;
+}
+
+export interface BodyFlowResult {
+  fragments: BodyFragment[];
+  overflow: boolean;
+}
+
+/** Finds the source offset represented by a wrapped prefix. Whitespace removed
+ * at line ends is included in the consumed range so continuation never starts
+ * with an accidental blank. */
+function consumedOffset(source: string, rendered: string): number {
+  let sourceAt = 0;
+  for (const char of rendered) {
+    while (/\s/.test(source[sourceAt] ?? '') && !/\s/.test(char)) sourceAt += 1;
+    if (source[sourceAt] === char) sourceAt += 1;
+    else {
+      const found = source.indexOf(char, sourceAt);
+      sourceAt = found >= 0 ? found + 1 : sourceAt;
+    }
+  }
+  while (/\s/.test(source[sourceAt] ?? '')) sourceAt += 1;
+  return sourceAt;
+}
+
+/** Measured body pagination with widow/orphan control. A fragment normally
+ * has at least two lines; if a one-line tail would remain, one line is moved
+ * from the previous frame. Font size stays fixed across all continuations. */
+export function flowBodyText(options: {
+  text: string;
+  spec: PageSpec;
+  boxes: Array<{ w: Mm; h: Mm }>;
+  measure: MeasureText;
+  minLines?: number;
+}): BodyFlowResult {
+  const text = options.text.trim();
+  if (!text) return { fragments: [], overflow: false };
+  const style = textStyle(options.spec, 'body');
+  const sizePt = style.size;
+  const minLines = Math.max(2, options.minLines ?? 2);
+  let offset = 0;
+  const fragments: BodyFragment[] = [];
+  for (const box of options.boxes) {
+    if (offset >= text.length) break;
+    const remaining = text.slice(offset);
+    const lines = wrapUnits(segmentUnits(remaining), mmToPt(box.w), sizePt, options.measure);
+    const lineCapacity = capacity('body', options.spec, box.h, sizePt);
+    if (lineCapacity <= 0 || lines.length === 0) continue;
+    let take = Math.min(lineCapacity, lines.length);
+    const tail = lines.length - take;
+    if (tail > 0 && tail < minLines && take > minLines) take -= minLines - tail;
+    if (take < minLines && lines.length > take) continue;
+    const rendered = lines.slice(0, take).join('\n');
+    const consumed = consumedOffset(remaining, rendered.replace(/\n/g, ''));
+    if (consumed <= 0) break;
+    const end = offset + consumed;
+    fragments.push({ text: text.slice(offset, end).trim(), start: offset, end, lineCount: take });
+    offset = end;
+  }
+  return { fragments, overflow: offset < text.length };
+}
+
 /** Lines that fit in `height` at a given size, respecting the role's maxLines. */
 function capacity(role: TextRole, spec: PageSpec, height: Mm, sizePt: number): number {
   const style = textStyle(spec, role);
